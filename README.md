@@ -1,5 +1,5 @@
 # Udon-MIDI-HTTP-Helper
-This is a proof of concept web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.
+This is a terms-of-service abiding proof of concept web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.
 
 # [Downloads (.exe)](https://github.com/DarthShader/Udon-MIDI-HTTP-Helper/releases)
 
