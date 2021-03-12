@@ -13,6 +13,15 @@ namespace Udon_MIDI_HTTP_Helper
 		static TeVirtualMIDI port;
 		static FileStream currentLog = null;
 		static long previousFileLength = 0;
+		static byte[] midiBuffer;
+		static int midiBufferOffset = 0;
+
+		enum MIDICommandType
+		{
+			NoteOff,
+			NoteOn,
+			ControlChange
+		}
 
 		static void Main()
 		{
@@ -40,7 +49,7 @@ namespace Udon_MIDI_HTTP_Helper
 			watcher.EnableRaisingEvents = true;
 
 			// Start thread to read output log for web requests
-			Console.WriteLine("Udon-MIDI-HTTP-Helper Ready.  Press any key to close the program.");
+			Console.WriteLine("Udon-MIDI-HTTP-Helper v2 Ready.  Press any key to close the program.");
 			Thread thread = new Thread(new ThreadStart(LogParseThread));
 			thread.Start();
 
@@ -128,12 +137,43 @@ namespace Udon_MIDI_HTTP_Helper
 
 				using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
 				using (Stream stream = response.GetResponseStream())
-				using (StreamReader reader = new StreamReader(stream))
+				using (StreamReader sr = new StreamReader(stream, Encoding.ASCII))
 				{
-					string[] bodyLines = reader.ReadToEnd().Split('\n');
-					foreach (string s in bodyLines)
-						if (s != "")
-							SendMIDICommand(s);
+					string body = sr.ReadToEnd();
+					long bodyLen = body.Length;
+
+					// With the current setup, only 65k bytes of MIDI data can be transferred at a time,
+					// and only 2 out of every 3 bytes can hold actual data + 3 bytes for data length
+					// So 65535 * (2/3) - 3 is the data cap per set of commands in virtualMIDI.
+					// However, VRChat appears to break when body size is > 254, so I assume that 
+					// means VRC can only receive 128 midi commands (127 data plus one for len) in one frame
+					// on in an indeterminant short time frame.
+					if (bodyLen > 254)
+                    {
+						Console.WriteLine("Web page response too large to be sent by MIDI: " + bodyLen);
+						return;
+                    }
+
+					// vritualMIDI allows sending chunks of midi commands in a single buffer, which
+					// is faster than individual commands.
+					int bufferLen = 3 + ((int)bodyLen / 2) * 3;
+					if (bodyLen % 2 == 1)
+						bufferLen += 3; // Add an extra midi command if an odd amoung of bytes need to be sent
+					midiBuffer = new byte[bufferLen];
+					midiBufferOffset = 0;
+
+					// Data length is sent as a single MIDI command before the actual data
+					SendMIDILength((int)bodyLen);
+					// Two bytes of data are packed into each MIDI command, since each command
+					// effectively only has 19 usable bits
+					byte[] buffer = Encoding.ASCII.GetBytes(body);
+					for (int i = 0; i < buffer.Length - 1; i+=2)
+						SendMIDIBytes(MIDICommandType.NoteOn, buffer[i], buffer[i+1]);
+					// Send final byte if the stream length is odd
+					if (buffer.Length % 2 == 1)
+						SendMIDIBytes(MIDICommandType.NoteOn, buffer[buffer.Length - 1], 0);
+
+					port.sendCommand(midiBuffer);
 				}
 			}
 			catch (Exception e)
@@ -142,79 +182,65 @@ namespace Udon_MIDI_HTTP_Helper
 			}
 		}
 
-		static void SendMIDICommand(string command)
+		static void SendMIDILength(int len)
 		{
+			// The NoteOff command is reserved for signaling a new paylod
+			// and the length of the data - an unsigned short packed into MIDI data
+			int a = (len & 0xFF00) >> 8;
+			int b = len & 0xFF;
+			SendMIDIBytes(MIDICommandType.NoteOff, a, b);
+		}
+		static void SendMIDIBytes(MIDICommandType type, int a, int b)
+        {
+			// Since MIDI commands' note and velocity bytes only have 7 usable bits,
+			// the highest bits of each two bytes are packed into the lowest two bits
+			// of the MIDI channel
+			int channelA = (a & 0x80) >> 7;
+			int channelB = (b & 0x80) >> 6;
+			int channel = channelA | channelB;
+			SendMIDICommand(type, channel, a & 0x7F, b & 0x7F);
+		}
+
+		static void SendMIDICommand(MIDICommandType type, int channel, int note, int velocity)
+        {
 			// Each of the three MIDI commands supported by VRChat is composed of three bytes
 			// The first four bits of the first byte determine the command type (NoteOn/NoteOff/ControlChange)
 			// The last four bits of the first byte determine the channel (instrument) the command is targeting
 			// The second byte's 7 primary bits determine the note to be played
 			// The last byte's 7 primary bits detemrine the velocity of the command
 
-			// This program expects MIDI commands received from web requests to be formatted in a specific way: 
-			// four integers with spaces in between corresponding to the command/channel/note/velocity, with
-			// new lines separating sequential commands.
-			// ex. 
-			// 0 0 80 127
-			// 0 0 74 50
-			// 1 0 80 120
-			// 0 5 10 2
-
-			byte[] midiCommand = new byte[3];
-
-			string[] commandArgs = command.Split(' ');
-			if (commandArgs.Length != 4)
+			switch (type)
 			{
-				Console.WriteLine("Malformed MIDI command: not enough arguments");
+				case MIDICommandType.NoteOff:
+					midiBuffer[midiBufferOffset] = 0x80;
+					break;
+				case MIDICommandType.NoteOn:
+					midiBuffer[midiBufferOffset] = 0x90;
+					break;
+				case MIDICommandType.ControlChange:
+					midiBuffer[midiBufferOffset] = 0xB0;
+					break;
+			}
+			if (channel < 0 || channel > 15)
+			{
+				Console.WriteLine("Malformed MIDI command: invalid channel: " + channel);
 				return;
 			}
-
-			try
+			else midiBuffer[midiBufferOffset] |= (byte)channel;
+			if (note < 0 || note > 127)
 			{
-				int commandType = Int32.Parse(commandArgs[0]);
-				switch (commandType)
-				{
-					case 0:
-						midiCommand[0] = 0x80; // NoteOff header
-						break;
-					case 1:
-						midiCommand[0] = 0x90; // NoteOn header
-						break;
-					case 2:
-						midiCommand[0] = 0xB0; // ControlChange header
-						break;
-					default:
-						Console.WriteLine("Malformed MIDI command: unknown command type: " + commandType);
-						return;
-				}
-
-				byte channel = Byte.Parse(commandArgs[1]); // (4 bits, 0-15)
-				byte note = Byte.Parse(commandArgs[2]); // (7 bits, 0-127)
-				byte velocity = Byte.Parse(commandArgs[3]); // (7 bits, 0-127)
-				if (channel < 0 || channel > 15)
-				{
-					Console.WriteLine("Malformed MIDI command: invalid channel: " + channel);
-					return;
-				}
-				else midiCommand[0] |= channel;
-				if (note < 0 || note > 127)
-				{
-					Console.WriteLine("Malformed MIDI command: invalid note: " + note);
-					return;
-				}
-				else midiCommand[1] = note;
-				if (velocity < 0 || velocity > 127)
-				{
-					Console.WriteLine("Malformed MIDI command: invalid velocity: " + velocity);
-					return;
-				}
-				else midiCommand[2] = velocity;
+				Console.WriteLine("Malformed MIDI command: invalid note: " + note);
+				return;
 			}
-			catch (Exception e)
+			else midiBuffer[midiBufferOffset+1] = (byte)note;
+			if (velocity < 0 || velocity > 127)
 			{
-				Console.WriteLine("Exception parsing MIDI command: " + e.Message);
+				Console.WriteLine("Malformed MIDI command: invalid velocity: " + velocity);
+				return;
 			}
+			else midiBuffer[midiBufferOffset+2] = (byte)velocity;
 
-			port.sendCommand(midiCommand);
+			midiBufferOffset += 3;
 		}
 	}
 }
