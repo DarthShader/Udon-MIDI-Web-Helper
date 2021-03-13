@@ -19,7 +19,8 @@ namespace Udon_MIDI_HTTP_Helper
 		const int VRC_MAX_MIDI_COMMANDS = 128;
 		const int MIDI_BYTES_PER_COMMAND = 3;
 		const int MAX_BYTES_PER_CHUNK = VRC_MAX_MIDI_COMMANDS * MIDI_BYTES_PER_COMMAND;
-		const int TIMEOUT_BETWEEN_MIDI_CHUNKS_MILLIS = 20;
+		const int TARGET_BYTES_PER_CHUNK = 90; // MAX_BYTES_PER_CHUNK default
+		const int TIMEOUT_BETWEEN_MIDI_CHUNKS_MILLIS = 100; // 20 default
 
 		enum MIDICommandType
 		{
@@ -36,7 +37,7 @@ namespace Udon_MIDI_HTTP_Helper
 			Console.WriteLine("using driver-version: " + TeVirtualMIDI.driverVersionString);
 
 			// Instantiate MIDI port
-			port = new TeVirtualMIDI("Udon-MIDI-HTTP-Helper", MAX_BYTES_PER_CHUNK, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
+			port = new TeVirtualMIDI("Udon-MIDI-HTTP-Helper", TARGET_BYTES_PER_CHUNK, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
 
 			// Open latest output log
 			string logFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low\\VRChat\\VRChat";
@@ -58,7 +59,7 @@ namespace Udon_MIDI_HTTP_Helper
 			watcher.EnableRaisingEvents = true;
 
 			// Start thread to read output log for web requests
-			Console.WriteLine("Udon-MIDI-HTTP-Helper v3 Ready.  Press any key to close the program.");
+			Console.WriteLine("Udon-MIDI-HTTP-Helper v4 Ready.  Press any key to close the program.");
 			Thread thread = new Thread(new ThreadStart(LogParseThread));
 			thread.Start();
 
@@ -151,19 +152,30 @@ namespace Udon_MIDI_HTTP_Helper
 					long bodyLen = body.Length;
 					byte[] buffer = Encoding.ASCII.GetBytes(body);
 
+					// Print response body size and estiamated time given the response size
+					Console.WriteLine("Sending web response through MIDI. (" + buffer.Length + " bytes, estimated time: " + (((float)(buffer.Length*3+6) / (float)TARGET_BYTES_PER_CHUNK) * (float)TIMEOUT_BETWEEN_MIDI_CHUNKS_MILLIS) / 1000f + " seconds)");
+
 					// virtualMIDI can send any number of MIDI commands at a time.
 					// However, VRChat appears to break when body size is > 254, so I assume that 
 					// means VRC can only receive 128 midi commands (127 data plus one for len) in one frame
 					// or in an indeterminant short time span, maybe one frame.
+
 					// Rough benchmarks show it takes 0.007 to 0.008 seconds to receive 254 bytes, so ~30K bytes per second
 					// throughput should be possible, if VRC wasn't having issues.
 
-					// Currently (3/12/2021), sending >128 MIDI commands in direct succession causes an IndexOutOfRangeException
-					// in VRC.SDK3.Midi.VRCMidiHandler.Update, so a timeout between sending MIDI chunks is currently implemented
+					// Currently (3/12/2021), sending >128 MIDI commands (256 bytes) in direct succession causes an IndexOutOfRangeException
+					// in VRC.SDK3.Midi.VRCMidiHandler.Update, so a timeout between sending MIDI chunks is currently implemented, and VERY slow
+
+					// (3/13/2021) IndexOutOfRangeException: Index was outside the bounds of the array.
+					// ǄǅǅǅǄǄǄǅǅǄǅǄǅǄǄǅǄǅǄǄǄǅǄǄǄǅǄǅǅǄǅǅǄǄǄǄǄǅǄǅǄǄǄǅǅǄǄ.Update()(at < 00000000000000000000000000000000 >:0)
+					// VRC.SDK3.Midi.VRCMidiHandler.Update()(at < 00000000000000000000000000000000 >:0)
+					// Can be triggered by loading a single large web page and then switching worlds (using 20ms timeout and the maximum 384 chunk size)
+
+					// VRChat's MIDI implementation also appears to re-fire notes it thinks are "on" after joining a new world
 
 					// virtualMIDI allows sending chunks of midi commands in a single buffer, which
 					// is faster than sending individual 3-byte commands.
-					int bufferLen = 3 + ((int)bodyLen / 2) * 3;
+					int bufferLen = 6 + ((int)bodyLen / 2) * 3;
 					if (bodyLen % 2 == 1)
 						bufferLen += 3; // Add an extra midi command if an odd amoung of bytes need to be sent
 					midiBuffer = new byte[bufferLen];
@@ -172,32 +184,32 @@ namespace Udon_MIDI_HTTP_Helper
 					// Data length is sent as a single MIDI command before the actual data
 					AddMIDILength((int)bodyLen);
 					// Two bytes of data are packed into each MIDI command, since each command
-					// effectively only has 19 usable bits
+					// effectively only has 19 usable bits, of which I use 16
 					for (int i = 0; i < buffer.Length - 1; i+=2)
 						AddMIDIBytes(MIDICommandType.NoteOn, buffer[i], buffer[i+1]);
 					// Send final byte if the stream length is odd
 					if (buffer.Length % 2 == 1)
 						AddMIDIBytes(MIDICommandType.NoteOn, buffer[buffer.Length - 1], 0);
 
-					// Send midiBuffer in 384 byte chunks, corresponding to 128 midi commands
-					int chunks = midiBuffer.Length / MAX_BYTES_PER_CHUNK;
+					// Send midiBuffer in byte chunks
+					int chunks = midiBuffer.Length / TARGET_BYTES_PER_CHUNK;
 					for (int i=0; i< chunks; i++)
                     {
-						byte[] chunkBytes = new byte[MAX_BYTES_PER_CHUNK];
-						Array.Copy(midiBuffer, i * MAX_BYTES_PER_CHUNK, chunkBytes, 0, MAX_BYTES_PER_CHUNK);
+						byte[] chunkBytes = new byte[TARGET_BYTES_PER_CHUNK];
+						Array.Copy(midiBuffer, i * TARGET_BYTES_PER_CHUNK, chunkBytes, 0, TARGET_BYTES_PER_CHUNK);
 						port.sendCommand(chunkBytes);
 
 						// Sleep test because VRC's MIDI implementation appears to only be able to receive a cretain amount of data PER FRAME
 						Thread.Sleep(TIMEOUT_BETWEEN_MIDI_CHUNKS_MILLIS);
 					}
-					int remainder = midiBuffer.Length % MAX_BYTES_PER_CHUNK;
+					int remainder = midiBuffer.Length % TARGET_BYTES_PER_CHUNK;
 					if (remainder != 0)
                     {
 						byte[] chunkBytes = new byte[remainder];
 						Array.Copy(midiBuffer, midiBuffer.Length - remainder, chunkBytes, 0, remainder);
 						port.sendCommand(chunkBytes);
 					}
-
+					Console.WriteLine("Response sent!");
 				}
 			}
 			catch (Exception e)
@@ -209,10 +221,13 @@ namespace Udon_MIDI_HTTP_Helper
 		static void AddMIDILength(int len)
 		{
 			// The NoteOff command is reserved for signaling a new paylod
-			// and the length of the data - an unsigned short packed into MIDI data
-			int a = (len & 0xFF00) >> 8;
-			int b = len & 0xFF;
+			// and the length of the data - an int packed into MIDI data
+			int a = (len & 0x7F000000) >> 24; // Exclude mantissa bit
+			int b = (len & 0xFF0000) >> 16;
+			int c = (len & 0xFF00) >> 8;
+			int d = len & 0xFF;
 			AddMIDIBytes(MIDICommandType.NoteOff, a, b);
+			AddMIDIBytes(MIDICommandType.NoteOff, c, d);
 		}
 		static void AddMIDIBytes(MIDICommandType type, int a, int b)
         {
@@ -255,13 +270,13 @@ namespace Udon_MIDI_HTTP_Helper
 				Console.WriteLine("Malformed MIDI command: invalid note: " + note);
 				return;
 			}
-			else midiBuffer[midiBufferOffset+1] = (byte)note;
+			else midiBuffer[midiBufferOffset + 1] = (byte)note;
 			if (velocity < 0 || velocity > 127)
 			{
 				Console.WriteLine("Malformed MIDI command: invalid velocity: " + velocity);
 				return;
 			}
-			else midiBuffer[midiBufferOffset+2] = (byte)velocity;
+			else midiBuffer[midiBufferOffset + 2] = (byte)velocity;
 
 			midiBufferOffset += 3;
 		}
