@@ -14,7 +14,7 @@ This is a terms-of-service abiding proof of concept web connectivity helper for 
 
 # How to Develop
 To request a web page, simply use `Debug.Log("[Udon-MIDI-HTTP-Helper] " + url);` and the program will parse and return the web page as MIDI commands.  Use the code in `UdonWebRequestExample.cs` to decode the received midi commands into a byte array.  This provided code requires [UdonSharp](https://github.com/MerlinVR/UdonSharp).
-Currently, any web response can be passed to udon at ~70kbps.
+Currently, any web response could be passed to udon at ~70kbps, but at the risk of VRChat crashing due to MIDI implementation bugs.  Data throughput has been slowed extremely as of the v4 release.
 
 # How to Build
 The program can be build with Visual Studio and the C# library wrapper included with [Tobias Erichsen's virtualMIDI SDK](http://www.tobias-erichsen.de/software/virtualmidi/virtualmidi-sdk.html)
