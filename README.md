@@ -1,3 +1,5 @@
+![icon](https://user-images.githubusercontent.com/42289116/112239883-b4314480-8c1d-11eb-812a-329190c426af.png)
+
 # Udon-MIDI-Web-Helper
 This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 256 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~100kbps.
 
