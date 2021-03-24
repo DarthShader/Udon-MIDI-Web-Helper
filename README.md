@@ -14,7 +14,7 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 * Don't have other MIDI devices connected to your computer, otherwise the new [VRChat midi launch option](https://docs.vrchat.com/docs/launch-options) must be used to specify the "Udon-MIDI-HTTP-Helper" device.
 * Default and extended VRChat logging is supported.
 
-# How to Develop
+# How to use in VRChat worlds
 Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp)
 
 To add web conectivity to an Udon powered VRChat world, add a single copy of the provided prefab `UdonMIDIWebHandler`.  This contains a single UdonBehaviour through which all web connections and midi data passes.  
