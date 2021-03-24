@@ -7,7 +7,7 @@ using System;
 
 public class UdonMIDIWebHandler : UdonSharpBehaviour
 {
-    const int MAX_ACTIVE_CONNECTIONS = 255;
+    const int MAX_ACTIVE_CONNECTIONS = 256;
     const int MAX_USABLE_BYTES_PER_FRAME = 190;
     const float READY_TIMEOUT_SECONDS = 1.0f;
 
@@ -266,7 +266,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             bool connectionClosedResponse = (connectionData[currentID][0] & 0x80) == 0x80;
             if (connectionClosedResponse)
             {
-                usb.SendCustomEvent("WebSocketClsoed");
+                usb.SendCustomEvent("WebSocketClosed");
                 connectionRequesters[currentID] = null;
                 connectionsOpen--;
             }

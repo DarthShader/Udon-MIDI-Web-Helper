@@ -37,7 +37,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
         output.text += EncodingGetUnicode(connectionData) + '\n';
     }
 
-    public void WebSocketClsoed(/* int connectionID */)
+    public void WebSocketClosed(/* int connectionID */)
     {
         connectionID = -1;
     }

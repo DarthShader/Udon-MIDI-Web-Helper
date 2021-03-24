@@ -6,7 +6,7 @@ namespace Udon_MIDI_Web_Helper
 {
     class MIDIManager
     {
-        public const int MAX_ACTIVE_CONNECTIONS = 255;
+        public const int MAX_ACTIVE_CONNECTIONS = 256;
         const int WEB_REQUEST_FAILED_ERROR_CODE = 111;
 
         class ConnectionResponse
