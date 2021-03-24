@@ -22,14 +22,16 @@ To add web conectivity to an Udon powered VRChat world, add a single copy of the
 To make HTTP GET requests through UdonSharpBehaviours: 
 1. Link a public variable to the singleton `UdonMIDIWebHandler`
 2. Add the variables `int connectionID`, `byte[] connectionData`, `int responseCode` to the behaviour
-3. Call `WebRequestGet(uri, this)` on the handler, which returns an int ID for the connection that is opening.  This is useful for behaviours that need to open multiple connections.
+3. Call `WebRequestGet()` on the handler, which returns an int ID for the connection that is opening.  This is useful for behaviours that need to open multiple connections.
 4. Implement a `public void WebRequestGetCallback()` function that the handler can call.  Before calling, it populates the `connectionID`, `connectionData`, and `responseCode` variables.
 
 To use WebSocket connections through UdonSharpBehaviours:
 1. Link a public variable to the singleton `UdonMIDIWebHandler`
 2. Add the variables `int connectionID`, `byte[] connectionData`, `bool messageIsText` to the behaviour
-3. Call `WebSocketOpen(uri, this)` on the handler, which returns a connection ID
+3. Call `WebSocketOpen()` on the handler, which returns a connection ID
 4. Implement the functions `public void WebSocketReceive()` and `public void WebSocketClosed()` which populate the previously listed variables before being called by the handler
+
+More detailed examples for these systems are available in the provided unitypackage.
 
 # How to Build
 The program can be build with Visual Studio and the C# library wrapper included with [Tobias Erichsen's virtualMIDI SDK](http://www.tobias-erichsen.de/software/virtualmidi/virtualmidi-sdk.html)
