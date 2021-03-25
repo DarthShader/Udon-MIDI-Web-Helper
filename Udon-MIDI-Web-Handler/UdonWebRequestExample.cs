@@ -8,24 +8,23 @@ using System;
 public class UdonWebRequestExample : UdonSharpBehaviour
 {
     public UdonMIDIWebHandler webManager;
-    public int connectionID;
-    public byte[] connectionData;
-    public int responseCode;
+    int connectionID;
+    byte[] connectionData;
+    int responseCode;
 
     public InputField input;
     public InputField output;
 
     public override void Interact()
     {
-        connectionID = webManager.WebRequestGet(input.text, this);
+        connectionID = webManager.WebRequestGet(input.text, this, true);
     }
 
     public void WebRequestGetCallback(/* int connectionID, byte[] connectionData, int responseCode */)
     {
-        // Most web content is going to be in UTF8, but since System.Text.Encoding
-        // isn't exposed to Udon and no one in their right mind is going to reimplement
-        // that in Udon, a simple ASCII display will do for now.
-        output.text = responseCode + " " + EncodingGetASCII(connectionData);
+        // EncodingGetUnicode can freeze the game for a second, it would be better
+        // to time slice the byte array to string conversion for very large results.
+        output.text = responseCode + " " + EncodingGetUnicode(connectionData);
     }
 
     // SystemTextEncoding.__get_ASCII__SystemTextEncoding is not exposed in Udon

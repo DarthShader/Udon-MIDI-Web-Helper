@@ -3,6 +3,7 @@ using System.Threading;
 using System.Net;
 using System.Net.Http;
 using System.Net.WebSockets;
+using System.Text;
 
 namespace Udon_MIDI_Web_Helper
 {
@@ -15,6 +16,7 @@ namespace Udon_MIDI_Web_Helper
         ClientWebSocket[] webSockets;
         CancellationTokenSource ctSource;
         ArraySegment<byte>[] wsBuffers;
+        bool[] wsAutoConvertMessages;
 
         public CancellationTokenSource CTSource
         {
@@ -33,9 +35,10 @@ namespace Udon_MIDI_Web_Helper
             webSockets = new ClientWebSocket[MIDIManager.MAX_ACTIVE_CONNECTIONS];
             wsBuffers = new ArraySegment<byte>[MIDIManager.MAX_ACTIVE_CONNECTIONS];
             ctSource = new CancellationTokenSource();
+            wsAutoConvertMessages = new bool[MIDIManager.MAX_ACTIVE_CONNECTIONS];
         }
 
-        public async void GetWebRequest(int connectionID, string uri)
+        public async void GetWebRequest(int connectionID, string uri, bool autoConvertResponse)
         {
             Uri webUri;
             try
@@ -64,6 +67,13 @@ namespace Udon_MIDI_Web_Helper
             // Create byte array for HTTP response
             int responseCode = (int)response.StatusCode;
             byte[] data = await response.Content.ReadAsByteArrayAsync();
+            // Since System.Text.Encoding isn't whitelisted in Udon,
+            // Unity represents strings internally as UTF16, and almost
+            // all web content is encoded in UTF8, the helper has an
+            // option when making web requests to convert the response
+            // from UTF8 to UTF16 before sending data through MIDI.
+            if (autoConvertResponse)
+                data = Encoding.Convert(Encoding.UTF8, Encoding.Unicode, data);
 
             // Send 4 bytes for response length, 4 bytes for response code, and then response data
             byte[] responseData = new byte[sizeof(int) * 2 + data.Length];
@@ -73,7 +83,7 @@ namespace Udon_MIDI_Web_Helper
             midiManager.AddConnectionResponse((byte)connectionID, responseData);
         }
 
-        public async void OpenWebSocketConnection(int connectionID, string uri)
+        public async void OpenWebSocketConnection(int connectionID, string uri, bool autoConvertResponses)
         {
             Uri webUri;
             try
@@ -92,14 +102,23 @@ namespace Udon_MIDI_Web_Helper
             CancellationToken token = ctSource.Token;
             await cws.ConnectAsync(webUri, token);
             wsBuffers[connectionID] = new ArraySegment<byte>(new byte[WEBSOCKET_BUFFER_SIZE]);
+            wsAutoConvertMessages[connectionID] = autoConvertResponses;
             while (cws.State == WebSocketState.Open)
             {
                 WebSocketReceiveResult wssr = await cws.ReceiveAsync(wsBuffers[connectionID], token);
-                byte[] data = new byte[4 + 1 + wssr.Count];
-                Array.Copy(BitConverter.GetBytes(wssr.Count+1), 0, data, 0, 4);
-                data[4] = wssr.MessageType == WebSocketMessageType.Text ? (byte)0x0 :(byte)0x1;
-                Array.Copy(wsBuffers[connectionID].Array, 0, data, 5, wssr.Count);
-                midiManager.AddConnectionResponse((byte)connectionID, data);
+
+                // Copy data to an intermediate array in case it needs to be converted from UTF8 to UTF16
+                byte[] message = new byte[wssr.Count];
+                Array.Copy(wsBuffers[connectionID].Array, 0, message, 0, wssr.Count);
+                if (wsAutoConvertMessages[connectionID] && (wssr.MessageType == WebSocketMessageType.Text))
+                    message = Encoding.Convert(Encoding.UTF8, Encoding.Unicode, message);
+
+                // Send 4 bytes for response length, 1 bytes for txt/bin flag, and then response data
+                byte[] responseData = new byte[4 + 1 + message.Length];
+                Array.Copy(BitConverter.GetBytes(message.Length + 1), 0, responseData, 0, 4);
+                responseData[4] = wssr.MessageType == WebSocketMessageType.Text ? (byte)0x0 :(byte)0x1;
+                Array.Copy(message, 0, responseData, 5, message.Length);
+                midiManager.AddConnectionResponse((byte)connectionID, responseData);
             }
         }
 
@@ -109,8 +128,12 @@ namespace Udon_MIDI_Web_Helper
             midiManager.SendWebSocketClosedResponse(connectionID);
         }
 
-        public void SendWebSocketMessage(int connectionID, byte[] data, bool text)
+        public void SendWebSocketMessage(int connectionID, byte[] data, bool text, bool autoConvertMessage)
         {
+            // Allow both text and binary modes to be auto-converted
+            if (autoConvertMessage)
+                data = Encoding.Convert(Encoding.Unicode, Encoding.UTF8, data);
+
             if (text)
                 webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Text, false, ctSource.Token);
             else

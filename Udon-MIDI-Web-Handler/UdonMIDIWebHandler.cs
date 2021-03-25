@@ -59,14 +59,19 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         }
         
         secondsSinceLastReady += Time.deltaTime;
-        if (connectionsOpen > 0 && secondsSinceLastReady > READY_TIMEOUT_SECONDS)
+        if (connectionsOpen > 0)
         {
-            Debug.Log("[Udon-MIDI-Web-Helper] RDY"); // Ready message lets the helper know its safe to send a new frame OR if a frame was dropped and never received
-            secondsSinceLastReady = 0;
+            if (secondsSinceLastReady > READY_TIMEOUT_SECONDS)
+            {
+                // Only send a RDY exactly READY_TIMEOUT_SECONDS after at least one connection was opened
+                Debug.Log("[Udon-MIDI-Web-Helper] RDY"); // Ready message lets the helper know its safe to send a new frame OR if a frame was dropped and never received
+                secondsSinceLastReady = 0;
+            }
         }
+        else secondsSinceLastReady = 0;
     }
 
-    public int WebRequestGet(string uri, UdonSharpBehaviour usb) 
+    public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16) 
     {
         int connectionID = getAvailableConnectionID();
         if (connectionID != -1)
@@ -75,11 +80,12 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             connectionIsWebSocket[connectionID] = false;
             connectionsOpen++;
 
-            // Allow for full range of UTF16 characters (queries will be properly percent encoded
-            // by the helper program) AND Base64 encode the data because the output log doesn't
+            // Allow for full range of Basic Multilingual Plane UTF16 characters.
+            // (queries will be properly percent encoded by the helper program)
+            // Base64 encode the data because the output log doesn't
             // play nice with certain special characters.  Also so a new log line can't be spoofed.
             byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
-            Debug.Log("[Udon-MIDI-Web-Helper] GET " + connectionID + " " + Convert.ToBase64String(utf16Bytes));
+            Debug.Log("[Udon-MIDI-Web-Helper] GET " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : ""));
         }
         return connectionID;
     }
@@ -99,7 +105,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         return connectionID;
     }
 
-    public int WebSocketOpen(string uri, UdonSharpBehaviour usb)
+    public int WebSocketOpen(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16)
     {
         int connectionID = getAvailableConnectionID();
         if (connectionID != -1)
@@ -108,7 +114,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             connectionIsWebSocket[connectionID] = true;
             connectionsOpen++;
             byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
-            Debug.Log("[Udon-MIDI-Web-Helper] WSO " + connectionID + " " + Convert.ToBase64String(utf16Bytes));
+            Debug.Log("[Udon-MIDI-Web-Helper] WSO " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : ""));
         }
         return connectionID;
     }
@@ -132,15 +138,16 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
     public void WebSocketSendStringASCII(int connectionID, string s)
     {
-        WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true);
+        // UTF8 is backwards compatible with ASCII
+        WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true, false);
     }
 
-    public void WebSocketSendStringUnicode(int connectionID, string s)
+    public void WebSocketSendStringUnicode(int connectionID, string s, bool autoConvertToUTF8)
     {
-        WebSocketSend(connectionID, EncodingUnicodeGetBytes(s), true);
+        WebSocketSend(connectionID, EncodingUnicodeGetBytes(s), true, autoConvertToUTF8);
     }
 
-    public void WebSocketSend(int connectionID, byte[] data, bool messageIsText)
+    public void WebSocketSend(int connectionID, byte[] data, bool messageIsText, bool autoConvertToUTF8)
     {
         // Other UdonBehaviors will have to convert their own strings to bytes,
         // becuase it is unknown what encoding the string may be in.  The same
@@ -155,7 +162,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
         // Base64 encode the data because the output log doesn't play nice
         // with certain special characters.  Also so a new log line can't be spoofed.
-        Debug.Log("[Udon-MIDI-Web-Helper] WSM " + connectionID + (messageIsText ? " txt " : " bin ") + Convert.ToBase64String(data));
+        Debug.Log("[Udon-MIDI-Web-Helper] WSM " + connectionID + (messageIsText ? " txt " : " bin ") + Convert.ToBase64String(data) + (autoConvertToUTF8 ? " UTF16" : ""));
     }
 
     public override void MidiNoteOn(int channel, int number, int velocity)
@@ -223,11 +230,13 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME - 4; // ignore the response length int
             responseLengthState = 1;
             responseLengthBytes = (int)byteB;
+            Debug.Log("connectionData[currentID] is null, usableBytesThisFrame:" + usableBytesThisFrame);
         }
         else 
         {
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME;
             currentFrame[currentFrameOffset++] = byteB;
+            Debug.Log("connectionData[currentID] is not null, usableBytesThisFrame:" + usableBytesThisFrame);
         }
     }
 
@@ -294,6 +303,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             connectionsOpen--;
         }
 
+        Debug.Log("Resetting response array");
         // Reset response array
         connectionData[currentID] = null;
         connectionDataOffsets[currentID] = 0;

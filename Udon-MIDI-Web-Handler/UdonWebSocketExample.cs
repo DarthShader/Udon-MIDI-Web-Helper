@@ -8,9 +8,9 @@ using UnityEngine.UI;
 public class UdonWebSocketExample : UdonSharpBehaviour
 {
     public UdonMIDIWebHandler webManager;
-    public int connectionID = -1;
-    public byte[] connectionData;
-    public bool messageIsText;
+    int connectionID = -1;
+    byte[] connectionData;
+    bool messageIsText;
 
     public InputField urlField;
     public InputField messageField;
@@ -22,14 +22,14 @@ public class UdonWebSocketExample : UdonSharpBehaviour
             webManager.WebSocketClose(connectionID);
 
         // This function is called from urlField's end editing event
-        connectionID = webManager.WebSocketOpen(urlField.text, this);
+        connectionID = webManager.WebSocketOpen(urlField.text, this, true);
         output.text = "";
     }
 
     public override void Interact()
     {
         if (connectionID != -1)
-            webManager.WebSocketSendStringUnicode(connectionID, messageField.text);
+            webManager.WebSocketSendStringUnicode(connectionID, messageField.text, true);
     }
 
     public void WebSocketReceive(/* int connectionID, byte[] connectionData, bool messageIsText */)

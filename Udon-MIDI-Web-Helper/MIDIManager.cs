@@ -21,7 +21,7 @@ namespace Udon_MIDI_Web_Helper
         MIDIFrame lastFrame;
         TeVirtualMIDI port;
 
-        bool gameReady = false;
+        bool gameReady = true;
         public bool GameIsReady
         {
             get
@@ -38,11 +38,6 @@ namespace Udon_MIDI_Web_Helper
         {
             port = new TeVirtualMIDI("Udon-MIDI-HTTP-Helper", MIDIFrame.VRC_MAX_BYTES_PER_UPDATE, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
             
-            // Print MIDI driver header
-            Console.WriteLine("TeVirtualMIDI started");
-            Console.WriteLine("using dll-version:    " + TeVirtualMIDI.versionString);
-            Console.WriteLine("using driver-version: " + TeVirtualMIDI.driverVersionString);
-
             for (int i = 0; i < responses.Length; i++)
                 responses[i] = new Queue<ConnectionResponse>();
         }
@@ -93,8 +88,7 @@ namespace Udon_MIDI_Web_Helper
 
                 // Use up to 190 bytes from the response
                 MIDIFrame mf = new MIDIFrame();
-                mf.AddHeader(responseToSend.connectionID, responseToSend.data[0]);
-                responseToSend.bytesSent++;
+                mf.AddHeader(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++]);
 
                 // Add bytes in increments of 9 until either all bytes to send have been added
                 // or no more space is available in the MIDIFrame.
