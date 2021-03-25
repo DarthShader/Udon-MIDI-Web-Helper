@@ -230,13 +230,11 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME - 4; // ignore the response length int
             responseLengthState = 1;
             responseLengthBytes = (int)byteB;
-            Debug.Log("connectionData[currentID] is null, usableBytesThisFrame:" + usableBytesThisFrame);
         }
         else 
         {
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME;
             currentFrame[currentFrameOffset++] = byteB;
-            Debug.Log("connectionData[currentID] is not null, usableBytesThisFrame:" + usableBytesThisFrame);
         }
     }
 
@@ -303,7 +301,6 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             connectionsOpen--;
         }
 
-        Debug.Log("Resetting response array");
         // Reset response array
         connectionData[currentID] = null;
         connectionDataOffsets[currentID] = 0;
