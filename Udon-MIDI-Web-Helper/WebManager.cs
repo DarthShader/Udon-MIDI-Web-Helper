@@ -29,13 +29,7 @@ namespace Udon_MIDI_Web_Helper
         public WebManager(MIDIManager m)
         {
             midiManager = m;
-            HttpClientHandler handler = new HttpClientHandler();
-            handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
-            httpClient = new HttpClient(handler);
-            webSockets = new ClientWebSocket[MIDIManager.MAX_ACTIVE_CONNECTIONS];
-            wsBuffers = new ArraySegment<byte>[MIDIManager.MAX_ACTIVE_CONNECTIONS];
-            ctSource = new CancellationTokenSource();
-            wsAutoConvertMessages = new bool[MIDIManager.MAX_ACTIVE_CONNECTIONS];
+            Reset();
         }
 
         public async void GetWebRequest(int connectionID, string uri, bool autoConvertResponse)
@@ -55,7 +49,7 @@ namespace Udon_MIDI_Web_Helper
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.GetAsync(uri);
+                response = await httpClient.GetAsync(uri, ctSource.Token);
             }
             catch (Exception e)
             {
@@ -99,13 +93,12 @@ namespace Udon_MIDI_Web_Helper
 
             webSockets[connectionID] = new ClientWebSocket();
             ClientWebSocket cws = webSockets[connectionID];
-            CancellationToken token = ctSource.Token;
-            await cws.ConnectAsync(webUri, token);
+            await cws.ConnectAsync(webUri, ctSource.Token);
             wsBuffers[connectionID] = new ArraySegment<byte>(new byte[WEBSOCKET_BUFFER_SIZE]);
             wsAutoConvertMessages[connectionID] = autoConvertResponses;
             while (cws.State == WebSocketState.Open)
             {
-                WebSocketReceiveResult wssr = await cws.ReceiveAsync(wsBuffers[connectionID], token);
+                WebSocketReceiveResult wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
 
                 // Copy data to an intermediate array in case it needs to be converted from UTF8 to UTF16
                 byte[] message = new byte[wssr.Count];
@@ -138,6 +131,19 @@ namespace Udon_MIDI_Web_Helper
                 webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Text, false, ctSource.Token);
             else
                 webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Binary, false, ctSource.Token);
+        }
+
+        public void Reset()
+        {
+            if (ctSource != null)
+                ctSource.Cancel();
+            HttpClientHandler handler = new HttpClientHandler();
+            handler.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+            httpClient = new HttpClient(handler);
+            webSockets = new ClientWebSocket[MIDIManager.MAX_ACTIVE_CONNECTIONS];
+            wsBuffers = new ArraySegment<byte>[MIDIManager.MAX_ACTIVE_CONNECTIONS];
+            ctSource = new CancellationTokenSource();
+            wsAutoConvertMessages = new bool[MIDIManager.MAX_ACTIVE_CONNECTIONS];
         }
     }
 }

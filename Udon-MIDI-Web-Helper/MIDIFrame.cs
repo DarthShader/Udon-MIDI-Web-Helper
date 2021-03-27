@@ -15,19 +15,11 @@ namespace Udon_MIDI_Web_Helper
         public const int VRC_MAX_BYTES_PER_UPDATE = 255;
         public const int MIDI_BYTES_PER_COMMAND = 3;
         public const int COMMANDS_PER_FRAME = VRC_MAX_BYTES_PER_UPDATE / MIDI_BYTES_PER_COMMAND; // 85
-        public const int USABLE_BYTES_PER_FRAME = 190; // 2 bytes per command (170) + 1 extra byte per 4 commands (max 21) - 1 connectionID byte
+         // 2 bytes per command (170) + 1 extra byte every 4 commands (max 21) + 10 command type bytes - 1 connectionID byte
+        public const int USABLE_BYTES_PER_FRAME = 200;
 
         byte[] buffer;
         int currentOffset = 0;
-        int spaceAvailable = USABLE_BYTES_PER_FRAME;
-
-        public int SpaceAvailable
-        {
-            get
-            {
-                return spaceAvailable;
-            }
-        }
 
         public enum MIDICommandType
         {
@@ -41,29 +33,47 @@ namespace Udon_MIDI_Web_Helper
             buffer = new byte[VRC_MAX_BYTES_PER_UPDATE];
         }
 
-        public void Add9Bytes(byte[] bytes)
+        public void AddHeader2(byte connectionID, byte a, bool flipFlop)
         {
-            // The last 189 bytes in a frame should be added with this method, the first
-            // byte should be used with AddHeader
-
-            if (bytes.Length != 9)
-                throw new ArgumentOutOfRangeException();
-
-            // Encode 8 bytes into the channel, note, and velocity
-            // The last byte is placed into the high 2 bits of channel across 4 MIDI commands
-            Add(bytes[0], bytes[1], bytes[8] & 0x3);
-            Add(bytes[2], bytes[3], (bytes[8] & 0xC) >> 2);
-            Add(bytes[4], bytes[5], (bytes[8] & 0x30) >> 4);
-            Add(bytes[6], bytes[7], (bytes[8] & 0xC0) >> 6);
-            spaceAvailable -= 9;
+            // Each MIDI frame's first command is a header command with a byte specifying
+            // which connection this data is for.  MIDI frame headers should be sent
+            // with an alternating bit to prevent the single race condition this system is prone to.
+            if (flipFlop)
+                Add(connectionID, a, 0, MIDICommandType.ControlChange);
+            else
+                Add(connectionID, a, 1, MIDICommandType.ControlChange);
         }
 
-        public void AddHeader(byte connectionID, byte a)
+        public void Add199Bytes(byte[] bytes)
         {
-            // Each MIDI frame's first command is a NoteOff command with a byte specifying
-            // which connection this data is for.
-            Add(connectionID, a, 0, MIDICommandType.NoteOff);
-            spaceAvailable -= 1;
+            // The last 199 bytes in a frame should be added with this method, the first
+            // byte should be used with AddHeader
+
+            if (bytes.Length != 199)
+                throw new ArgumentOutOfRangeException();
+
+            // Encode 8 bytes into the channel, note, and velocity of each command.
+            // Every 8 bytes, an extra byte can be packed in the 4 command's utilBits (2 high bits of the channel)
+            // Every 18 bytes (8 commands: 16 bytes + 2 utilBits bytes), an extra byte can be added by using the commandType as a bit slot
+            for (int i=0; i<190; i+=19)
+            {
+                Add(bytes[i],    bytes[i+1],   bytes[i+8] & 0x3,         (bytes[i+18] & 0x1)  == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+2],  bytes[i+3],  (bytes[i+8] & 0xC) >> 2,   (bytes[i+18] & 0x2)  == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+4],  bytes[i+5],  (bytes[i+8] & 0x30) >> 4,  (bytes[i+18] & 0x4)  == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+6],  bytes[i+7],  (bytes[i+8] & 0xC0) >> 6,  (bytes[i+18] & 0x8)  == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+
+                Add(bytes[i+9],  bytes[i+10],  bytes[i+17] & 0x3,        (bytes[i+18] & 0x10) == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+11], bytes[i+12], (bytes[i+17] & 0xC) >> 2,  (bytes[i+18] & 0x20) == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+13], bytes[i+14], (bytes[i+17] & 0x30) >> 4, (bytes[i+18] & 0x40) == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+                Add(bytes[i+15], bytes[i+16], (bytes[i+17] & 0xC0) >> 6, (bytes[i+18] & 0x80) == 0x0 ? MIDICommandType.NoteOn : MIDICommandType.NoteOff);
+            }
+
+            // Last 9 bytes
+            const int j = 190;
+            Add(bytes[j],   bytes[j+1],  bytes[j+8] & 0x3);
+            Add(bytes[j+2], bytes[j+3], (bytes[j+8] & 0xC) >> 2);
+            Add(bytes[j+4], bytes[j+5], (bytes[j+8] & 0x30) >> 4);
+            Add(bytes[j+6], bytes[j+7], (bytes[j+8] & 0xC0) >> 6);
         }
 
         private void Add(byte a, byte b, int extraBits = 0, MIDICommandType type = MIDICommandType.NoteOn)

@@ -124,6 +124,11 @@ namespace Udon_MIDI_Web_Helper
                 string[] args = line.Substring(57).Split(' ');
                 switch (args[0])
                 {
+                    case "RST":
+                        Console.WriteLine(line);
+                        webManager.Reset();
+                        midiManager.Reset();
+                        break;
                     case "GET": // new http get request with conntionID, uri, and optional "auto-convert response from UTF8 to UTF16" arguments
                         {
                             Console.WriteLine(line);

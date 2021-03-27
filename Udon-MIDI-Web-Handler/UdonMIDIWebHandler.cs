@@ -7,32 +7,58 @@ using System;
 
 public class UdonMIDIWebHandler : UdonSharpBehaviour
 {
+    // Constants
     const int MAX_ACTIVE_CONNECTIONS = 256;
-    const int MAX_USABLE_BYTES_PER_FRAME = 190;
+    const int MAX_USABLE_BYTES_PER_FRAME = 200;
     const float READY_TIMEOUT_SECONDS = 1.0f;
+    const int MAX_QUEUED_RESPONSES = 100;
+    const int BYTES_TO_CONVERT_PER_TICK = 1000;
 
+    // Connections management
     int connectionsOpen;
     byte[][] connectionData;
     int[] connectionDataOffsets;
     UdonSharpBehaviour[] connectionRequesters;
     bool[] connectionIsWebSocket;
 
-    public bool MIDIInUse()
-    {
-        return connectionsOpen > 0;
-    }
-
+    // Current frame
     byte[] currentFrame;
     int currentFrameOffset;
-    int usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME; // Some frames are a full 190 bytes, some frames have the 4 byte response length int at the start
     int currentID;
-
-    // state variables
-    float secondsSinceLastReady;
-    int utilBitsState;
-    int utilBitsByte;
+    bool flipFlop;
+    bool ignoreThisFrame;
+    int usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME; // Some frames are a full 200 bytes, some frames have the 4 byte response length int at the start
     int responseLengthState;
     int responseLengthBytes;
+    int utilBitsState;
+    int utilBitsByte;
+    int commandTypePackedState;
+    int commandTypePackedByte;
+
+    // Update loop
+    float secondsSinceLastReady;
+
+    // Time sliced response string conversion queues
+    byte[][][] resultsBytesQueues;
+    char[][][] resultsCharsQueues;
+    int[][] responseCodes;
+    int[][] resultsType;
+    int[] resultQueueCounts;
+    int[] resultQueueFronts;
+    int[] resultQueueBacks;
+    int[] currentResultOffsets;
+
+    // Time sliced requests string conversion queues (uris + websocket text data)
+    string[][] requestsStringQueues;
+    byte[][][] requestsBytesQueues;
+    int[][] requestType;
+    int[] requestQueueCounts;
+    int[] requestQueueFronts;
+    int[] requestQueueBacks;
+    int[] currentRequestOffsets;
+
+    int queuesTotal;
+    int rrCurrentQueue;
 
     void Start()
     {
@@ -41,6 +67,41 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         connectionRequesters = new UdonSharpBehaviour[MAX_ACTIVE_CONNECTIONS];
         connectionIsWebSocket = new bool[MAX_ACTIVE_CONNECTIONS];
         currentFrame = new byte[MAX_USABLE_BYTES_PER_FRAME];
+
+        // byte[] array of length MAX_QUEUED_RESPONSES, in an array of length MAX_ACTIVE_CONNECTIONS
+        resultsBytesQueues = new byte[MAX_ACTIVE_CONNECTIONS][][];
+        resultsCharsQueues = new char[MAX_ACTIVE_CONNECTIONS][][];
+        responseCodes = new int[MAX_ACTIVE_CONNECTIONS][];
+        resultsType = new int[MAX_ACTIVE_CONNECTIONS][];
+
+        requestsStringQueues = new string[MAX_ACTIVE_CONNECTIONS][];
+        requestsBytesQueues = new byte[MAX_ACTIVE_CONNECTIONS][][];
+        requestType = new int[MAX_ACTIVE_CONNECTIONS][];
+
+        for (int i=0; i<MAX_ACTIVE_CONNECTIONS; i++)
+        {
+            resultsBytesQueues[i] = new byte[MAX_QUEUED_RESPONSES][];
+            resultsCharsQueues[i] = new char[MAX_QUEUED_RESPONSES][];
+            responseCodes[i] = new int[MAX_QUEUED_RESPONSES];
+            resultsType[i] = new int[MAX_QUEUED_RESPONSES];
+
+            requestsStringQueues[i] = new string[MAX_QUEUED_RESPONSES];
+            requestsBytesQueues[i] = new byte[MAX_QUEUED_RESPONSES][];
+            requestType[i] = new int[MAX_QUEUED_RESPONSES];
+
+        }
+        resultQueueCounts = new int[MAX_ACTIVE_CONNECTIONS];
+        resultQueueFronts = new int[MAX_ACTIVE_CONNECTIONS];
+        resultQueueBacks = new int[MAX_ACTIVE_CONNECTIONS];
+        currentResultOffsets = new int[MAX_ACTIVE_CONNECTIONS];
+
+        requestQueueCounts = new int[MAX_ACTIVE_CONNECTIONS];
+        requestQueueFronts = new int[MAX_ACTIVE_CONNECTIONS];
+        requestQueueBacks = new int[MAX_ACTIVE_CONNECTIONS];
+        currentRequestOffsets = new int[MAX_ACTIVE_CONNECTIONS];
+
+        // Reset the state of the helper
+        Debug.Log("[Udon-MIDI-Web-Helper] RST");
     }
 
     void Update()
@@ -69,6 +130,19 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             }
         }
         else secondsSinceLastReady = 0;
+
+        // Round robin across both responses and requests queues.
+        // Send off requests/responses to their designated locations if their byte data has been converted to Unicode/vice versa
+        // OR process some bytes at the top of the queue.
+        // All of this queueing and time sliced unicode conversion exists only to stop the hitch when a large
+        // number of data is converted with EncodingUnicodeGetBytes or EncodingGetUnicode.
+        // Neither of which would be necessary if System.Text.Encoding was whitelisted.
+        int bytesProcessed = 0;
+        while (queuesTotal > 0 && bytesProcessed < BYTES_TO_CONVERT_PER_TICK)
+        {
+            // Not implemented
+            
+        }
     }
 
     public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16) 
@@ -154,6 +228,8 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         // goes for received messages.  Sending a text message using a specific
         // encoding may be critical for an application, so it can't be 
         // automatically done here.  Two helper functions are available, though.
+        // It may also be beneficial for other behaviors to time slice convert
+        // their strings if the data that needs to be sent hitches on the helper functions.
         if (connectionID < 0 || connectionID >= MAX_ACTIVE_CONNECTIONS)
         {
             Debug.LogError("[UdonMIDIWebHandler] connectionID: Argument out of range");
@@ -167,11 +243,23 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
     public override void MidiNoteOn(int channel, int number, int velocity)
     {
+        ReceiveDataCommand(0x0, channel, number, velocity);
+    }
+
+    public override void MidiNoteOff(int channel, int number, int velocity)
+    {
+        ReceiveDataCommand(0x1, channel, number, velocity);
+    }
+
+    void ReceiveDataCommand(int commandTypeBit, int channel, int number, int velocity)
+    {
+        if (ignoreThisFrame) return;
+
         byte byteA = (byte)(((channel & 0x1) << 7) | number);
         byte byteB = (byte)(((channel & 0x2) << 6) | velocity);
         int channelHighBits = (channel & 0xC) >> 2;
 
-        // The first 4 commands of the first frame of a response store a 4-byte int for the response's full length
+        // The first 4 commands of the first frame of a response store a 4-byte int for the response's full length.
         // The bytes received from this midi command are either stored normally or used to piece together that int.
         switch (responseLengthState)
         {
@@ -179,7 +267,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 currentFrame[currentFrameOffset++] = byteA;
                 currentFrame[currentFrameOffset++] = byteB;
                 break;
-            case 1: // The middle two bytes of response length; the first was received by a NoteOff command
+            case 1: // The middle two bytes of response length; the first was received by a ControlChange command
                 responseLengthBytes |= (int)byteA << 8;
                 responseLengthBytes |= (int)byteB << 16;
                 responseLengthState++;
@@ -191,7 +279,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 break;
         }
         
-        // Every 4 MidiNoteOns, an extra byte can be decoded from the channel's high two bits
+        // Every 4 data commands, an extra byte can be decoded from the channel's high two bits
         switch (utilBitsState)
         {
             case 0:
@@ -211,20 +299,40 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         }
         utilBitsState++;
 
+        // Every 8 data commands, an extra byte can be decoded from the sequential commandTypeBits
+        commandTypePackedByte |= commandTypeBit << commandTypePackedState++;
+        if (commandTypePackedState == 8)
+        {
+            currentFrame[currentFrameOffset++] = (byte)commandTypePackedByte;
+            commandTypePackedState = 0;
+            commandTypePackedByte = 0;
+        }
+
         // Check for complete midi frame
         if (currentFrameOffset == usableBytesThisFrame)
             ReceiveFrame();
     }
 
-    public override void MidiNoteOff(int channel, int number, int velocity)
+    public override void MidiControlChange(int channel, int number, int velocity)
     {
+        // Check flipflop util bit
+        if (flipFlop != ((channel & 0x4) == 0x0))
+        {
+            // Race condition - frame mistakenly retransmitted.
+            // Ignore all MIDI commands until the next header is received.
+            ignoreThisFrame = true;
+            return;
+        }
+        flipFlop = !flipFlop;
+        ignoreThisFrame = false;
+
         // The first of 85 commands that are guaranteed to be received within this game tick.
         // Instantiate new frame buffer, and read the connectionID.
         currentID = ((channel & 0x1) << 7) | number;
         byte byteB = (byte)(((channel & 0x2) << 6) | velocity);
 
         // If this is the first frame for a response, it means the next two
-        // MidiNoteOn events' main bytes will contain the length of the response.
+        // MidiNoteOn/MidiNoteOff events' main bytes will contain the length of the response.
         if (connectionData[currentID] == null)
         {
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME - 4; // ignore the response length int
@@ -236,6 +344,9 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             usableBytesThisFrame = MAX_USABLE_BYTES_PER_FRAME;
             currentFrame[currentFrameOffset++] = byteB;
         }
+
+        commandTypePackedState = 0;
+        commandTypePackedByte = 0;
     }
 
     void ReceiveFrame()
@@ -293,15 +404,15 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             int responseCode = BitConverterToInt32(connectionData[currentID], 0);
             byte[] responseData = new byte[connectionData[currentID].Length-4];
             Array.Copy(connectionData[currentID], 4, responseData, 0, connectionData[currentID].Length-4);
+
             usb.SetProgramVariable("responseCode", responseCode);
             usb.SetProgramVariable("connectionData", responseData);
             usb.SendCustomEvent("WebRequestGetCallback");
-            
             connectionRequesters[currentID] = null;
             connectionsOpen--;
         }
-
-        // Reset response array
+        
+        // Reset response arary
         connectionData[currentID] = null;
         connectionDataOffsets[currentID] = 0;
     }

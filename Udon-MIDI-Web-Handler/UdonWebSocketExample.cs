@@ -10,6 +10,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
     public UdonMIDIWebHandler webManager;
     int connectionID = -1;
     byte[] connectionData;
+    string unicodeData;
     bool messageIsText;
 
     public InputField urlField;

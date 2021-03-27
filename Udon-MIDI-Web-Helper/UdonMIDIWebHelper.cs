@@ -11,7 +11,7 @@ namespace Udon_MIDI_Web_Helper
             Console.WriteLine("TeVirtualMIDI started");
             Console.WriteLine("using dll-version:    " + TeVirtualMIDI.versionString);
             Console.WriteLine("using driver-version: " + TeVirtualMIDI.driverVersionString);
-            Console.WriteLine("Udon-MIDI-Web-Helper v7 Ready.  Press any key to end the program.");
+            Console.WriteLine("Udon-MIDI-Web-Helper v8 Ready.  Press any key to end the program.");
 
             Thread logParserThread = new Thread(new ThreadStart(new LogParser().Run));
             logParserThread.Start();
@@ -19,7 +19,7 @@ namespace Udon_MIDI_Web_Helper
             Console.ReadKey();
             logParserThread.Abort();
 
-            Console.WriteLine("Udon-MIDI-Web-Helper v7 Stopped.  Press any key to close this console.");
+            Console.WriteLine("Udon-MIDI-Web-Helper v8 Stopped.  Press any key to close this console.");
             Console.ReadKey();
         }
     }

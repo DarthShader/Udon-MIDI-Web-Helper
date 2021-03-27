@@ -10,6 +10,7 @@ public class UdonWebRequestExample : UdonSharpBehaviour
     public UdonMIDIWebHandler webManager;
     int connectionID;
     byte[] connectionData;
+    string unicodeData;
     int responseCode;
 
     public InputField input;

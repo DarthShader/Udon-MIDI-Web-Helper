@@ -20,6 +20,7 @@ namespace Udon_MIDI_Web_Helper
         int connectionIndex;
         MIDIFrame lastFrame;
         TeVirtualMIDI port;
+        bool flipFlop;
 
         bool gameReady = true;
         public bool GameIsReady
@@ -88,29 +89,19 @@ namespace Udon_MIDI_Web_Helper
 
                 // Use up to 190 bytes from the response
                 MIDIFrame mf = new MIDIFrame();
-                mf.AddHeader(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++]);
+                mf.AddHeader2(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++], flipFlop);
+                flipFlop = !flipFlop;
 
-                // Add bytes in increments of 9 until either all bytes to send have been added
-                // or no more space is available in the MIDIFrame.
-                byte[] bytesToAdd = new byte[9];
-                while (responseToSend.bytesSent < responseToSend.data.Length)
-                {
-                    if (mf.SpaceAvailable < 9)
-                        break;
-
-                    int bytesLeftToSend = responseToSend.data.Length - responseToSend.bytesSent;
-                    int bytesToAddCount = Math.Min(bytesLeftToSend, 9); // In case there's less than 9 bytes left to send
-                    Array.Copy(responseToSend.data, responseToSend.bytesSent, bytesToAdd, 0, bytesToAddCount);
-                    mf.Add9Bytes(bytesToAdd);
-                    responseToSend.bytesSent += 9;
-                }
-
-                // Fill the rest of the frame with dummy midi commands so it gets delivered correctly
-                while (mf.SpaceAvailable > 0)
-                    mf.Add9Bytes(bytesToAdd);
+                // Add up to 199 bytes from the active response to an array of data to send
+                byte[] bytesToAdd = new byte[199];
+                int bytesLeftToSend = responseToSend.data.Length - responseToSend.bytesSent;
+                int bytesToAddCount = Math.Min(bytesLeftToSend, 199); // In case there's less than 199 bytes left to send
+                Array.Copy(responseToSend.data, responseToSend.bytesSent, bytesToAdd, 0, bytesToAddCount);
+                mf.Add199Bytes(bytesToAdd);
+                responseToSend.bytesSent += bytesToAddCount;
 
                 // Remove response if all bytes have been sent
-                if (responseToSend.bytesSent >= responseToSend.data.Length)
+                if (responseToSend.bytesSent == responseToSend.data.Length)
                 {
                     responses[connectionIndex].Dequeue();
                     responsesCount--;
@@ -138,6 +129,17 @@ namespace Udon_MIDI_Web_Helper
             Array.Copy(BitConverter.GetBytes((int)2), 0, data, 0, 4);
             data[4] = 0x80; // High bit of the text/bin flag means the the connection was closed.
             AddConnectionResponse((byte)connectionID, data);
+        }
+
+        public void Reset()
+        {
+            GameIsReady = true;
+            responsesCount = 0;
+            connectionIndex = 0;
+            lastFrame = null;
+            flipFlop = false;
+            for (int i = 0; i < responses.Length; i++)
+                responses[i] = new Queue<ConnectionResponse>();
         }
     }
 }
