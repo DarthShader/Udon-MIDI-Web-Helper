@@ -93,12 +93,44 @@ namespace Udon_MIDI_Web_Helper
 
             webSockets[connectionID] = new ClientWebSocket();
             ClientWebSocket cws = webSockets[connectionID];
-            await cws.ConnectAsync(webUri, ctSource.Token);
+            try
+            {
+                await cws.ConnectAsync(webUri, ctSource.Token);
+            }
+            catch (WebSocketException e)
+            {
+                Console.WriteLine("Failed to open websocket: " + e.Message);
+                midiManager.SendWebSocketClosedResponse(connectionID);
+                webSockets[connectionID] = null;
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
             wsBuffers[connectionID] = new ArraySegment<byte>(new byte[WEBSOCKET_BUFFER_SIZE]);
             wsAutoConvertMessages[connectionID] = autoConvertResponses;
             while (cws.State == WebSocketState.Open)
             {
-                WebSocketReceiveResult wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
+                WebSocketReceiveResult wssr;
+                try
+                {
+                    wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
+                }
+                catch (WebSocketException e)
+                {
+                    Console.WriteLine("WebSocket error: " + e.Message);
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine("WebSocket error: " + e.Message);
+                    break;
+                }
 
                 // Copy data to an intermediate array in case it needs to be converted from UTF8 to UTF16
                 byte[] message = new byte[wssr.Count];
@@ -117,8 +149,15 @@ namespace Udon_MIDI_Web_Helper
 
         public async void CloseWebSocketConnection(int connectionID)
         {
-            await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
-            midiManager.SendWebSocketClosedResponse(connectionID);
+            try
+            {
+                await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
+                midiManager.SendWebSocketClosedResponse(connectionID);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Could not close websocket: " + e.Message);
+            }
         }
 
         public void SendWebSocketMessage(int connectionID, byte[] data, bool text, bool autoConvertMessage)
@@ -127,10 +166,17 @@ namespace Udon_MIDI_Web_Helper
             if (autoConvertMessage)
                 data = Encoding.Convert(Encoding.Unicode, Encoding.UTF8, data);
 
-            if (text)
-                webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Text, false, ctSource.Token);
-            else
-                webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Binary, false, ctSource.Token);
+            try
+            {
+                if (text)
+                    webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Text, false, ctSource.Token);
+                else
+                    webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Binary, false, ctSource.Token);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Error sending WebSocket message: " + e.Message);
+            }
         }
 
         public void Reset()

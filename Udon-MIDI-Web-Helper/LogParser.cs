@@ -132,13 +132,20 @@ namespace Udon_MIDI_Web_Helper
                     case "GET": // new http get request with conntionID, uri, and optional "auto-convert response from UTF8 to UTF16" arguments
                         {
                             Console.WriteLine(line);
-                            int connectionID = Int32.Parse(args[1]);
-                            // Un-base64 the uri into a byte array, then convert it from Unicode to a string
-                            string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
-                            bool autoConvertResponse = false;
-                            if (args.Length > 3)
-                                autoConvertResponse = args[3] == "UTF16";
-                            webManager.GetWebRequest(connectionID, uriDecoded, autoConvertResponse);
+                            try
+                            {
+                                int connectionID = Int32.Parse(args[1]);
+                                // Un-base64 the uri into a byte array, then convert it from Unicode to a string
+                                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                                bool autoConvertResponse = false;
+                                if (args.Length > 3)
+                                    autoConvertResponse = args[3] == "UTF16";
+                                webManager.GetWebRequest(connectionID, uriDecoded, autoConvertResponse);
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine("Error parsing web request: " + e.Message);
+                            }
                             break;
                         }
                     case "RDY":
@@ -156,30 +163,51 @@ namespace Udon_MIDI_Web_Helper
                     case "WSO": // new websocket connection with conntionID, uri, and optional UTF16 arguments
                         {
                             Console.WriteLine(line);
-                            int connectionID = Int32.Parse(args[1]);
-                            string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
-                            bool autoConvertResponse = false;
-                            if (args.Length > 3)
-                                autoConvertResponse = args[3] == "UTF16";
-                            webManager.OpenWebSocketConnection(connectionID, uriDecoded, autoConvertResponse);
+                            try
+                            {
+                                int connectionID = Int32.Parse(args[1]);
+                                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                                bool autoConvertResponse = false;
+                                if (args.Length > 3)
+                                    autoConvertResponse = args[3] == "UTF16";
+                                webManager.OpenWebSocketConnection(connectionID, uriDecoded, autoConvertResponse);
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine("Error parsing web request: " + e.Message);
+                            }
                             break;
                         }
                     case "WSC": // close existing websocket connection with connectionID argument
                         {
                             Console.WriteLine(line);
-                            webManager.CloseWebSocketConnection(Int32.Parse(args[1]));
+                            try
+                            {
+                                webManager.CloseWebSocketConnection(Int32.Parse(args[1]));
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine("Error parsing connection ID: " + e.Message);
+                            }
                             break;
                         }
                     case "WSM": // Send websocket message with connectionID, text/bin flag, data, and optional UTF16 arguments
                         {
                             Console.WriteLine(line);
-                            int connectionID = Int32.Parse(args[1]);
-                            bool textMessage = args[2] == "txt";
-                            byte[] data = Convert.FromBase64String(args[3]);
-                            bool autoConvertMessage = false;
-                            if (args.Length > 4)
-                                autoConvertMessage = args[4] == "UTF16";
-                            webManager.SendWebSocketMessage(connectionID, data, textMessage, autoConvertMessage);
+                            try
+                            {
+                                int connectionID = Int32.Parse(args[1]);
+                                bool textMessage = args[2] == "txt";
+                                byte[] data = Convert.FromBase64String(args[3]);
+                                bool autoConvertMessage = false;
+                                if (args.Length > 4)
+                                    autoConvertMessage = args[4] == "UTF16";
+                                webManager.SendWebSocketMessage(connectionID, data, textMessage, autoConvertMessage);
+                            }
+                            catch (Exception e)
+                            {
+                                Console.WriteLine("Error parsing web request: " + e.Message);
+                            }
                             break;
                         }
                 }

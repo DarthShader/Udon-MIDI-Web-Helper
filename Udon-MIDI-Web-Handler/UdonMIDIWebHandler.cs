@@ -11,13 +11,14 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     const int MAX_ACTIVE_CONNECTIONS = 256;
     const int MAX_USABLE_BYTES_PER_FRAME = 200;
     const float READY_TIMEOUT_SECONDS = 1.0f;
-    const int MAX_QUEUED_RESPONSES = 100;
-    const int BYTES_TO_CONVERT_PER_TICK = 1000;
 
     // Connections management
     int connectionsOpen;
     byte[][] connectionData;
     int[] connectionDataOffsets;
+    char[][] connectionDataChars;
+    int[] connectionDataCharsOffsets;
+    bool[] connectionReturnsStrings;
     UdonSharpBehaviour[] connectionRequesters;
     bool[] connectionIsWebSocket;
 
@@ -38,67 +39,16 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     // Update loop
     float secondsSinceLastReady;
 
-    // Time sliced response string conversion queues
-    byte[][][] resultsBytesQueues;
-    char[][][] resultsCharsQueues;
-    int[][] responseCodes;
-    int[][] resultsType;
-    int[] resultQueueCounts;
-    int[] resultQueueFronts;
-    int[] resultQueueBacks;
-    int[] currentResultOffsets;
-
-    // Time sliced requests string conversion queues (uris + websocket text data)
-    string[][] requestsStringQueues;
-    byte[][][] requestsBytesQueues;
-    int[][] requestType;
-    int[] requestQueueCounts;
-    int[] requestQueueFronts;
-    int[] requestQueueBacks;
-    int[] currentRequestOffsets;
-
-    int queuesTotal;
-    int rrCurrentQueue;
-
     void Start()
     {
         connectionData = new byte[MAX_ACTIVE_CONNECTIONS][];
         connectionDataOffsets = new int[MAX_ACTIVE_CONNECTIONS];
+        connectionDataChars = new char[MAX_ACTIVE_CONNECTIONS][];
+        connectionDataCharsOffsets = new int[MAX_ACTIVE_CONNECTIONS];
         connectionRequesters = new UdonSharpBehaviour[MAX_ACTIVE_CONNECTIONS];
         connectionIsWebSocket = new bool[MAX_ACTIVE_CONNECTIONS];
+        connectionReturnsStrings = new bool[MAX_ACTIVE_CONNECTIONS];
         currentFrame = new byte[MAX_USABLE_BYTES_PER_FRAME];
-
-        // byte[] array of length MAX_QUEUED_RESPONSES, in an array of length MAX_ACTIVE_CONNECTIONS
-        resultsBytesQueues = new byte[MAX_ACTIVE_CONNECTIONS][][];
-        resultsCharsQueues = new char[MAX_ACTIVE_CONNECTIONS][][];
-        responseCodes = new int[MAX_ACTIVE_CONNECTIONS][];
-        resultsType = new int[MAX_ACTIVE_CONNECTIONS][];
-
-        requestsStringQueues = new string[MAX_ACTIVE_CONNECTIONS][];
-        requestsBytesQueues = new byte[MAX_ACTIVE_CONNECTIONS][][];
-        requestType = new int[MAX_ACTIVE_CONNECTIONS][];
-
-        for (int i=0; i<MAX_ACTIVE_CONNECTIONS; i++)
-        {
-            resultsBytesQueues[i] = new byte[MAX_QUEUED_RESPONSES][];
-            resultsCharsQueues[i] = new char[MAX_QUEUED_RESPONSES][];
-            responseCodes[i] = new int[MAX_QUEUED_RESPONSES];
-            resultsType[i] = new int[MAX_QUEUED_RESPONSES];
-
-            requestsStringQueues[i] = new string[MAX_QUEUED_RESPONSES];
-            requestsBytesQueues[i] = new byte[MAX_QUEUED_RESPONSES][];
-            requestType[i] = new int[MAX_QUEUED_RESPONSES];
-
-        }
-        resultQueueCounts = new int[MAX_ACTIVE_CONNECTIONS];
-        resultQueueFronts = new int[MAX_ACTIVE_CONNECTIONS];
-        resultQueueBacks = new int[MAX_ACTIVE_CONNECTIONS];
-        currentResultOffsets = new int[MAX_ACTIVE_CONNECTIONS];
-
-        requestQueueCounts = new int[MAX_ACTIVE_CONNECTIONS];
-        requestQueueFronts = new int[MAX_ACTIVE_CONNECTIONS];
-        requestQueueBacks = new int[MAX_ACTIVE_CONNECTIONS];
-        currentRequestOffsets = new int[MAX_ACTIVE_CONNECTIONS];
 
         // Reset the state of the helper
         Debug.Log("[Udon-MIDI-Web-Helper] RST");
@@ -130,28 +80,16 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             }
         }
         else secondsSinceLastReady = 0;
-
-        // Round robin across both responses and requests queues.
-        // Send off requests/responses to their designated locations if their byte data has been converted to Unicode/vice versa
-        // OR process some bytes at the top of the queue.
-        // All of this queueing and time sliced unicode conversion exists only to stop the hitch when a large
-        // number of data is converted with EncodingUnicodeGetBytes or EncodingGetUnicode.
-        // Neither of which would be necessary if System.Text.Encoding was whitelisted.
-        int bytesProcessed = 0;
-        while (queuesTotal > 0 && bytesProcessed < BYTES_TO_CONVERT_PER_TICK)
-        {
-            // Not implemented
-            
-        }
     }
 
-    public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16) 
+    public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String) 
     {
         int connectionID = getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
             connectionIsWebSocket[connectionID] = false;
+            connectionReturnsStrings[connectionID] = returnUTF16String;
             connectionsOpen++;
 
             // Allow for full range of Basic Multilingual Plane UTF16 characters.
@@ -179,13 +117,14 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         return connectionID;
     }
 
-    public int WebSocketOpen(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16)
+    public int WebSocketOpen(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String)
     {
         int connectionID = getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
             connectionIsWebSocket[connectionID] = true;
+            connectionReturnsStrings[connectionID] = returnUTF16String;
             connectionsOpen++;
             byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
             Debug.Log("[Udon-MIDI-Web-Helper] WSO " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : ""));
@@ -212,7 +151,6 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
     public void WebSocketSendStringASCII(int connectionID, string s)
     {
-        // UTF8 is backwards compatible with ASCII
         WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true, false);
     }
 
@@ -356,6 +294,14 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         {
             connectionData[currentID] = new byte[responseLengthBytes];
             connectionDataOffsets[currentID] = 0;
+            if (connectionReturnsStrings[currentID])
+            {
+                // WebSocket responses have one byte header, HTTP requests have 4 byte responseCode
+                int responseHeaderLengthBytes = connectionIsWebSocket[currentID] ? 1 : 4;
+                // This assumes the response data to convert is Unicode bytes
+                connectionDataChars[currentID] = new char[(responseLengthBytes-responseHeaderLengthBytes) / 2];
+                connectionDataCharsOffsets[currentID] = 0;
+            }
         }
 
         // Fill response with current frame data
@@ -366,6 +312,21 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 break;
             
             connectionData[currentID][connectionDataOffsets[currentID]++] = currentFrame[i];
+        }
+
+        // Convert as many bytes to Unicode chars as possible.
+        // Due to VRChat's limited throughput MIDI implementation, converting characters
+        // here is an effective way to time slice an expensive operation rather than doing it
+        // all when the full buffer has been received.
+        if (connectionReturnsStrings[currentID] && (!connectionIsWebSocket[currentID] || (connectionData[currentID][0] & 0x1) == 0))
+        {
+            int responseHeaderLengthBytes = connectionIsWebSocket[currentID] ? 1 : 4;
+            for (int i=responseHeaderLengthBytes + connectionDataCharsOffsets[currentID] * 2; i<connectionDataOffsets[currentID]-1; i+= 2)
+            {
+                ushort charUTF16 = connectionData[currentID][i];
+                charUTF16 |= (ushort)(connectionData[currentID][i+1] << 8);
+                connectionDataChars[currentID][connectionDataCharsOffsets[currentID]++] = Convert.ToChar(charUTF16);
+            }
         }
 
         if (connectionDataOffsets[currentID] == connectionData[currentID].Length)
@@ -394,7 +355,10 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 byte[] messsageData = new byte[connectionData[currentID].Length-1];
                 Array.Copy(connectionData[currentID], 1, messsageData, 0, connectionData[currentID].Length-1);
                 usb.SetProgramVariable("messageIsText", messageIsText);
-                usb.SetProgramVariable("connectionData", messsageData);
+                if (messageIsText && connectionReturnsStrings[currentID])
+                    usb.SetProgramVariable("connectionString", new string(connectionDataChars[currentID]));
+                else
+                    usb.SetProgramVariable("connectionData", messsageData);
                 usb.SendCustomEvent("WebSocketReceive");
             }
         }
@@ -406,7 +370,10 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             Array.Copy(connectionData[currentID], 4, responseData, 0, connectionData[currentID].Length-4);
 
             usb.SetProgramVariable("responseCode", responseCode);
-            usb.SetProgramVariable("connectionData", responseData);
+            if (connectionReturnsStrings[currentID])
+                usb.SetProgramVariable("connectionString", new string(connectionDataChars[currentID]));
+            else
+                usb.SetProgramVariable("connectionData", responseData);
             usb.SendCustomEvent("WebRequestGetCallback");
             connectionRequesters[currentID] = null;
             connectionsOpen--;
@@ -449,4 +416,29 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             data[i] = (byte)s[i];
         return data;
     }
+
+    /*
+    // SystemTextEncoding.__get_ASCII__SystemTextEncoding is not exposed in Udon
+    string EncodingGetASCII(byte[] bytes)
+    {
+        char[] chars = new char[bytes.Length];
+        for (int i=0; i<chars.Length; i++)
+            chars[i] = (char)bytes[i];
+        return new string(chars);
+    }
+
+    // SystemTextEncoding.__get_Unicode__SystemTextEncoding is not exposed in Udon
+    string EncodingGetUnicode(byte[] bytes)
+    {
+        char[] chars = new char[bytes.Length / 2];
+        int offset = 0;
+        for (int i=0; i<bytes.Length; i+=2)
+        {
+            ushort charUTF16 = bytes[i];
+            charUTF16 |= (ushort)(bytes[i+1] << 8);
+            chars[offset++] = Convert.ToChar(charUTF16);
+        }
+        return new string(chars);
+    }
+    */
 }
