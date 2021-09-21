@@ -59,48 +59,61 @@ namespace Udon_MIDI_Web_Helper
                 // Watch for changes in log length
                 byte[] bytes = new byte[MAX_BYTES_PER_LINE];
                 while (true)
+                {
                     if (currentLog != null && currentLog.Length > previousFileLength)
                     {
                         currentLog.Seek(previousFileLength, SeekOrigin.Begin);
                         previousFileLength = currentLog.Length;
-                        int separatorMatchCount = 0;
                         int byteArrayOffset = 0;
-                        bool lineTooLong = false;
                         while (currentLog.Position < previousFileLength)
                         {
                             // Read log byte-by-byte to more easily match the log's unique 4 byte line separator sequence.
                             // Individual log lines need to be isolated so individual Debug.Log calls from Udon can be securely and reliably found
                             // to be sure the [Udon-MIDI-Web-Helper] tag wasn't spoofed by something else.
                             bytes[byteArrayOffset] = (byte)currentLog.ReadByte();
-                            if (bytes[byteArrayOffset] == lineSeparator[separatorMatchCount])
+                            if (bytes[byteArrayOffset] == lineSeparator[lineSeparator.Length - 1])
                             {
-                                separatorMatchCount++;
-                                if (separatorMatchCount == lineSeparator.Length)
+                                // Go through line separator from end to start, checking the previous bytes
+                                int tempByteArrayOffset = byteArrayOffset;
+                                bool separatorMatch = true;
+                                bool lineTooLong = false;
+                                for (int i = lineSeparator.Length - 1; i >= 0; i--)
                                 {
-                                    if (!lineTooLong)
+                                    // Loop back to the end of bytes if a massive line is being scanned.
+                                    // 'lineTooLong' is a safety net in case someone somehow aligned an
+                                    // arbitrary output log message - with unescaped characters - that
+                                    // is at the exact length of MAX_BYTES_PER_LINE with a spoofed [Udon-MIDI-Web-Helper] line afterwards.
+                                    if (tempByteArrayOffset < 0)
                                     {
-                                        // Single log line found
-                                        string line = Encoding.UTF8.GetString(bytes, 0, byteArrayOffset - lineSeparator.Length + 1);
-                                        ProcessLogLine(line);
-                                        byteArrayOffset = 0;
-                                        separatorMatchCount = 0;
-                                        continue;
+                                        lineTooLong = true;
+                                        tempByteArrayOffset = bytes.Length - 1;
                                     }
-                                    lineTooLong = false;
+
+                                    if (bytes[tempByteArrayOffset--] != lineSeparator[i])
+                                    {
+                                        separatorMatch = false;
+                                        break;
+                                    }
+                                }
+
+                                if (separatorMatch)
+                                {
+                                    // Single log line found
+                                    if (!lineTooLong && byteArrayOffset > lineSeparator.Length)
+                                        ProcessLogLine(Encoding.UTF8.GetString(bytes, 0, byteArrayOffset - lineSeparator.Length + 1));
+                                    byteArrayOffset = 0;
+                                    continue;
                                 }
                             }
-                            else separatorMatchCount = 0;
+
                             byteArrayOffset++;
-                            if (byteArrayOffset == MAX_BYTES_PER_LINE)
-                            {
-                                // Safety net in case someone somehow aligned an arbitrary output log message - with unescaped characters - that
-                                // is at the exact length of MAX_BYTES_PER_LINE with a spoofed [Udon-MIDI-Web-Helper] line afterwards.
-                                lineTooLong = true;
-                                // Emergency overflow, the line won't be parsed anyway
-                                byteArrayOffset = 0;
-                            }
                         }
                     }
+
+                    // Only send midi frames on this thread to prevent race conditions
+                    if (midiManager.GameIsReady)
+                        midiManager.SendFrameIfDataAvailable(false);
+                }
             }
             catch (ThreadAbortException)
             {
@@ -116,8 +129,8 @@ namespace Udon_MIDI_Web_Helper
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] RDY
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] ACK
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSO 1 wss://echo.websocket.org UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 txt MessageText UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 bin binaryblob
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 txt MessageText true UTF16
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 bin binaryblob true
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSC 1
             if (line.Length > 58 && line.Substring(34, 22) == "[Udon-MIDI-Web-Helper]")
             {
@@ -152,7 +165,6 @@ namespace Udon_MIDI_Web_Helper
                         // RDY meesages are sennt from Udon to signal that the game is ready to receive a new frame.
                         // A RDY can also mean the previously sent frame was not received.
                         midiManager.GameIsReady = true;
-                        midiManager.SendFrameIfDataAvailable(false);
                         break;
                     case "ACK":
                         // Acknowledge that the previously sent frame was received AND that a new frame
@@ -200,9 +212,10 @@ namespace Udon_MIDI_Web_Helper
                                 bool textMessage = args[2] == "txt";
                                 byte[] data = Convert.FromBase64String(args[3]);
                                 bool autoConvertMessage = false;
-                                if (args.Length > 4)
-                                    autoConvertMessage = args[4] == "UTF16";
-                                webManager.SendWebSocketMessage(connectionID, data, textMessage, autoConvertMessage);
+                                bool endOfMessage = args[4] == "true";
+                                if (args.Length > 5)
+                                    autoConvertMessage = args[5] == "UTF16";
+                                webManager.SendWebSocketMessage(connectionID, data, textMessage, endOfMessage, autoConvertMessage);
                             }
                             catch (Exception e)
                             {

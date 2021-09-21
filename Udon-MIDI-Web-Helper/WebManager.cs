@@ -108,6 +108,15 @@ namespace Udon_MIDI_Web_Helper
             {
                 return;
             }
+
+            // Small arbitrary delay to make sure handshake goes thorugh;
+            // for some reason an "Open" websocket will abort if the first message
+            // is sent too soon.
+            //Thread.Sleep(100);
+            while (cws.State == WebSocketState.Connecting) ;
+            if (cws.State == WebSocketState.Open)
+                midiManager.SendWebSocketOpenedResponse(connectionID);
+
             wsBuffers[connectionID] = new ArraySegment<byte>(new byte[WEBSOCKET_BUFFER_SIZE]);
             wsAutoConvertMessages[connectionID] = autoConvertResponses;
             while (cws.State == WebSocketState.Open)
@@ -119,7 +128,9 @@ namespace Udon_MIDI_Web_Helper
                 }
                 catch (WebSocketException e)
                 {
-                    Console.WriteLine("WebSocket error: " + e.Message);
+                    Console.WriteLine("WebSocketException: " + e.Message);
+                    midiManager.SendWebSocketClosedResponse(connectionID);
+                    webSockets[connectionID] = null;
                     break;
                 }
                 catch (OperationCanceledException)
@@ -128,7 +139,9 @@ namespace Udon_MIDI_Web_Helper
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("WebSocket error: " + e.Message);
+                    Console.WriteLine("WebSocket exception: " + e.Message);
+                    midiManager.SendWebSocketClosedResponse(connectionID);
+                    webSockets[connectionID] = null;
                     break;
                 }
 
@@ -152,6 +165,8 @@ namespace Udon_MIDI_Web_Helper
             try
             {
                 await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
+                // Ignore the queued ws messages yet to be sent, Udon has closed the connection
+                midiManager.ClearQueuedResponses(connectionID);
                 midiManager.SendWebSocketClosedResponse(connectionID);
             }
             catch (Exception e)
@@ -160,7 +175,7 @@ namespace Udon_MIDI_Web_Helper
             }
         }
 
-        public void SendWebSocketMessage(int connectionID, byte[] data, bool text, bool autoConvertMessage)
+        public void SendWebSocketMessage(int connectionID, byte[] data, bool text, bool endOfMessage, bool autoConvertMessage)
         {
             // Allow both text and binary modes to be auto-converted
             if (autoConvertMessage)
@@ -168,10 +183,7 @@ namespace Udon_MIDI_Web_Helper
 
             try
             {
-                if (text)
-                    webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Text, false, ctSource.Token);
-                else
-                    webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), WebSocketMessageType.Binary, false, ctSource.Token);
+                _ = webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), text ? WebSocketMessageType.Text : WebSocketMessageType.Binary, endOfMessage, ctSource.Token);
             }
             catch (Exception e)
             {

@@ -22,6 +22,8 @@ namespace Udon_MIDI_Web_Helper
         TeVirtualMIDI port;
         bool flipFlop;
 
+        int currentFrame;
+
         bool gameReady = true;
         public bool GameIsReady
         {
@@ -35,9 +37,17 @@ namespace Udon_MIDI_Web_Helper
             }
         }
 
+        public int ResponsesCount
+        {
+            get
+            {
+                return responsesCount;
+            }
+        }
+
         public MIDIManager()
         {
-            port = new TeVirtualMIDI("Udon-MIDI-HTTP-Helper", MIDIFrame.VRC_MAX_BYTES_PER_UPDATE, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
+            port = new TeVirtualMIDI("Udon-MIDI-Web-Helper", MIDIFrame.VRC_MAX_BYTES_PER_UPDATE, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
             
             for (int i = 0; i < responses.Length; i++)
                 responses[i] = new Queue<ConnectionResponse>();
@@ -53,9 +63,6 @@ namespace Udon_MIDI_Web_Helper
             cr.connectionID = connectionID;
             responses[connectionID].Enqueue(cr);
             responsesCount++;
-
-            if (GameIsReady)
-                SendFrameIfDataAvailable(false);
         }
 
         public void SendFrameIfDataAvailable(bool ACK)
@@ -89,6 +96,7 @@ namespace Udon_MIDI_Web_Helper
 
                 // Use up to 190 bytes from the response
                 MIDIFrame mf = new MIDIFrame();
+                // nullref here due to response queue being emptied on other thread
                 mf.AddHeader2(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++], flipFlop);
                 flipFlop = !flipFlop;
 
@@ -124,10 +132,19 @@ namespace Udon_MIDI_Web_Helper
 
         public void SendWebSocketClosedResponse(int connectionID)
         {
-            // Send a single WS frame with data length 1, error bit set in the text/binary byte flag
+            // Send a single WS frame with data length 1, with error bit set in the text/binary byte flag
             byte[] data = new byte[4 + 1 + 1]; // 4 length, 1 flag byte, 1 data
             Array.Copy(BitConverter.GetBytes((int)2), 0, data, 0, 4);
             data[4] = 0x80; // High bit of the text/bin flag means the the connection was closed.
+            AddConnectionResponse((byte)connectionID, data);
+        }
+
+        public void SendWebSocketOpenedResponse(int connectionID)
+        {
+            // Send a single WS frame with data length 1, with opened bit set in the text/binary byte flag
+            byte[] data = new byte[4 + 1 + 1]; // 4 length, 1 flag byte, 1 data
+            Array.Copy(BitConverter.GetBytes((int)2), 0, data, 0, 4);
+            data[4] = 0x40; // Second highest bit of the text/bin flag means the the connection was opened.
             AddConnectionResponse((byte)connectionID, data);
         }
 
@@ -140,6 +157,12 @@ namespace Udon_MIDI_Web_Helper
             flipFlop = false;
             for (int i = 0; i < responses.Length; i++)
                 responses[i] = new Queue<ConnectionResponse>();
+        }
+
+        public void ClearQueuedResponses(int connectionID)
+        {
+            responsesCount -= responses[connectionID].Count;
+            responses[connectionID].Clear();
         }
     }
 }

@@ -9,7 +9,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
 {
     // Link this behaviour to the centralized web handler
     public UdonMIDIWebHandler webManager;
-    // Create variables to act as arguments for WebRequestGetCallback()
+    // Create variables to act as arguments for WebSocketReceive() and other callbacks
     int connectionID = -1;
     byte[] connectionData;
     string connectionString;
@@ -38,9 +38,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
         // bool returnUTF16String: Option to efficiently convert received text messages to a string before calling WebSocketReceive()
         connectionID = webManager.WebSocketOpen(urlField.text, this, true, true);
         if (connectionID == -1)
-            output.text = "Failed to open WebSocket\n";
-        else
-            output.text = "WebSocket Opened\n";
+            output.text = "Too many active connections!\n";
     }
 
     public override void Interact()
@@ -53,6 +51,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
         // int connectionID: The ID of the active WebSocket connection to send data on
         // byte[] data: The data to send
         // bool messageIsText: Flag to mark message data as text vs. binary
+        // bool endOfMessage: Flag to mark the message as complete/incomplete if data is too large too be sent in one message
         // bool autoConvertToUTF8: Option to automatically convert provided message data from Unicode to UTF8 before sending
 
         // WebSocketSendStringASCII()
@@ -71,6 +70,11 @@ public class UdonWebSocketExample : UdonSharpBehaviour
     public void WebSocketReceive(/* int connectionID, byte[] connectionData, string connectionString, bool messageIsText */)
     {
         output.text += connectionString + '\n';
+    }
+
+    public void WebSocketOpened(/* int connectionID */)
+    {
+        output.text = "WebSocket Opened\n";
     }
 
     public void WebSocketClosed(/* int connectionID */)

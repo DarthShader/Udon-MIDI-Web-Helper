@@ -54,6 +54,17 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         Debug.Log("[Udon-MIDI-Web-Helper] RST");
     }
 
+    public void OnDestroy()
+    {
+        // Scene is being unloaded, make sure to close open WS connections.  Large
+        // HTTP requests will still accumulate as unsent midi command blocks in the
+        // helper program, but that shouldn't be a problem if the helper is reset upon
+        // entering a new world with an instance of this behavior.
+        for (int i=0; i<MAX_ACTIVE_CONNECTIONS; i++)
+            if (connectionRequesters[i] != null && connectionIsWebSocket[i])
+                WebSocketClose(i);
+    }
+
     void Update()
     {
         // VRChat's update order for Udon appears to go: Update(), LateUpdate(), MidiNoteX(), at least
@@ -63,15 +74,14 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         // before the game tick expires, ideally resulting in one MIDI frame every game tick.
         if (currentFrameOffset == usableBytesThisFrame)
         {
-            // If a game tick has passed, its safe to receive the next frame
             Debug.Log("[Udon-MIDI-Web-Helper] ACK");
             currentFrameOffset = 0;
             secondsSinceLastReady = 0; // Don't send a ready, ACK doubles as a ready
         }
-        
-        secondsSinceLastReady += Time.deltaTime;
+
         if (connectionsOpen > 0)
         {
+            secondsSinceLastReady += Time.deltaTime;
             if (secondsSinceLastReady > READY_TIMEOUT_SECONDS)
             {
                 // Only send a RDY exactly READY_TIMEOUT_SECONDS after at least one connection was opened
@@ -79,7 +89,6 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 secondsSinceLastReady = 0;
             }
         }
-        else secondsSinceLastReady = 0;
     }
 
     public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String) 
@@ -142,24 +151,28 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
         if (connectionIsWebSocket[connectionID])
         {
-            connectionData[currentID] = null;
-            connectionDataOffsets[currentID] = 0;
-            connectionRequesters[currentID] = null;
-            connectionsOpen--;
+            Debug.Log("[Udon-MIDI-Web-Helper] WSC " + connectionID);
+
+            // Don't close connection immediately, there could be some queued data for this connection.
+            // Wait for an official 'connection close' MIDI command
+            //connectionData[currentID] = null;
+            //connectionDataOffsets[currentID] = 0;
+            //connectionRequesters[currentID] = null;
+            //connectionsOpen--;
         }
     }
 
     public void WebSocketSendStringASCII(int connectionID, string s)
     {
-        WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true, false);
+        WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true, true, false);
     }
 
     public void WebSocketSendStringUnicode(int connectionID, string s, bool autoConvertToUTF8)
     {
-        WebSocketSend(connectionID, EncodingUnicodeGetBytes(s), true, autoConvertToUTF8);
+        WebSocketSend(connectionID, EncodingUnicodeGetBytes(s), true, true, autoConvertToUTF8);
     }
 
-    public void WebSocketSend(int connectionID, byte[] data, bool messageIsText, bool autoConvertToUTF8)
+    public void WebSocketSend(int connectionID, byte[] data, bool messageIsText, bool endOfMessage, bool autoConvertToUTF8)
     {
         // Other UdonBehaviors will have to convert their own strings to bytes,
         // becuase it is unknown what encoding the string may be in.  The same
@@ -176,7 +189,8 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
         // Base64 encode the data because the output log doesn't play nice
         // with certain special characters.  Also so a new log line can't be spoofed.
-        Debug.Log("[Udon-MIDI-Web-Helper] WSM " + connectionID + (messageIsText ? " txt " : " bin ") + Convert.ToBase64String(data) + (autoConvertToUTF8 ? " UTF16" : ""));
+        Debug.Log("[Udon-MIDI-Web-Helper] WSM " + connectionID + (messageIsText ? " txt " : " bin ") 
+            + Convert.ToBase64String(data) + (endOfMessage ? " true" : " false") + (autoConvertToUTF8 ? " UTF16" : ""));
     }
 
     public override void MidiNoteOn(int channel, int number, int velocity)
@@ -253,11 +267,19 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
     public override void MidiControlChange(int channel, int number, int velocity)
     {
-        // Check flipflop util bit
+        // Check for freak accidents
         if (flipFlop != ((channel & 0x4) == 0x0))
         {
             // Race condition - frame mistakenly retransmitted.
             // Ignore all MIDI commands until the next header is received.
+            ignoreThisFrame = true;
+            return;
+        }
+        else if (currentFrameOffset != 0)
+        {
+            // Next frame was transmitted without the previous being ACK'd
+            // No idea what causes this
+            Debug.LogError("[UdonMIDIWebHandler] Freak accident! Header frame appeared without an ACK or RDY");
             ignoreThisFrame = true;
             return;
         }
@@ -343,7 +365,10 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             // First byte is the text/binary flag, with highest bit indiciating
             // that this is a dummy 'connection closed' response.
             bool connectionClosedResponse = (connectionData[currentID][0] & 0x80) == 0x80;
-            if (connectionClosedResponse)
+            bool connectionOpenedResponse = (connectionData[currentID][0] & 0x40) == 0x40;
+            if (connectionOpenedResponse)
+                usb.SendCustomEvent("WebSocketOpened");
+            else if (connectionClosedResponse)
             {
                 usb.SendCustomEvent("WebSocketClosed");
                 connectionRequesters[currentID] = null;
@@ -374,7 +399,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 usb.SetProgramVariable("connectionString", new string(connectionDataChars[currentID]));
             else
                 usb.SetProgramVariable("connectionData", responseData);
-            usb.SendCustomEvent("WebRequestGetCallback");
+            usb.SendCustomEvent("WebRequestReceived");
             connectionRequesters[currentID] = null;
             connectionsOpen--;
         }
