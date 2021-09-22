@@ -3,7 +3,7 @@
 # Udon-MIDI-Web-Helper
 This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 256 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~100kbps.
 
-# [Downloads (.exe and .unitypackage)](https://github.com/DarthShader/Udon-MIDI-Web-Helper/releases)
+# [Downloads (.exe and .unitypackage)](http://github.com/DarthShader/Udon-MIDI-Web-Helper/releases)
 
 # Requirements
 * [loopMIDI by Tobias Erichsen](https://www.tobias-erichsen.de/software/loopmidi.html) - This software includes a driver for creating virtual MIDI devices, which Windows does not natively support.  loopMIDI only needs to be installed; it does not have to be running for Udon-MIDI-Web-Helper to function.
