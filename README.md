@@ -11,7 +11,7 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 
 # How to Use
 * Run this program any time before starting VRChat or before entering a MIDI-enabled VRChat world.  If the program is closed after doing so, VRChat will have to be closed and re-opened in order for the MIDI connection to work again.
-* Don't have other MIDI devices connected to your computer, otherwise the new [VRChat midi launch option](https://docs.vrchat.com/docs/launch-options) must be used to specify the "Udon-MIDI-HTTP-Helper" device.
+* Don't have other MIDI devices connected to your computer, otherwise the new [VRChat midi launch option](https://docs.vrchat.com/docs/launch-options) must be used to specify the "Udon-MIDI-Web-Helper" device.
 * Default and extended VRChat logging is supported.
 
 # How to use in VRChat worlds
