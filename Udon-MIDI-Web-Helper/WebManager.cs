@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
+using System.Collections.Generic;
 
 namespace Udon_MIDI_Web_Helper
 {
@@ -32,24 +33,13 @@ namespace Udon_MIDI_Web_Helper
             Reset();
         }
 
-        public async void GetWebRequest(int connectionID, string uri, bool autoConvertResponse)
+        public async void GetWebRequest(int connectionID, Uri webUri, bool autoConvertResponse)
         {
-            Uri webUri;
-            try
-            {
-                webUri = new Uri(uri);
-            }
-            catch (UriFormatException e)
-            {
-                Console.WriteLine("URI incorrectly formatted: " + e.Message);
-                midiManager.SendWebRequestFailedResponse(connectionID);
-                return;
-            }
-
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.GetAsync(uri, ctSource.Token);
+                response = await httpClient.GetAsync(webUri, ctSource.Token);
+                
             }
             catch (Exception e)
             {
@@ -58,8 +48,30 @@ namespace Udon_MIDI_Web_Helper
                 return;
             }
 
+            AddWebResponse(response, connectionID, autoConvertResponse);
+        }
+
+        public async void PostWebRequest(int connectionID, Uri webUri, bool autoConvertResponse, Dictionary<string, string> args)
+        {
+            HttpResponseMessage response;
+            try
+            {
+                response = await httpClient.PostAsync(webUri, new FormUrlEncodedContent(args), ctSource.Token);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("HTTP POST request failed: " + e.Message);
+                midiManager.SendWebRequestFailedResponse(connectionID);
+                return;
+            }
+
+            AddWebResponse(response, connectionID, autoConvertResponse);
+        }
+
+        async void AddWebResponse(HttpResponseMessage response, int connectionID, bool autoConvertResponse)
+        {
             // Create byte array for HTTP response
-            int responseCode = (int)response.StatusCode;
+            int statusCode = (int)response.StatusCode;
             byte[] data = await response.Content.ReadAsByteArrayAsync();
             // Since System.Text.Encoding isn't whitelisted in Udon,
             // Unity represents strings internally as UTF16, and almost
@@ -68,29 +80,21 @@ namespace Udon_MIDI_Web_Helper
             // from UTF8 to UTF16 before sending data through MIDI.
             if (autoConvertResponse)
                 data = Encoding.Convert(Encoding.UTF8, Encoding.Unicode, data);
+            AddGenericResponse(statusCode, data, connectionID);
+        }
 
+        public void AddGenericResponse(int statusCode, byte[] data, int connectionID)
+        {
             // Send 4 bytes for response length, 4 bytes for response code, and then response data
             byte[] responseData = new byte[sizeof(int) * 2 + data.Length];
             Array.Copy(BitConverter.GetBytes(data.Length + sizeof(int)), 0, responseData, 0, sizeof(int)); // data length + response code
-            Array.Copy(BitConverter.GetBytes(responseCode), 0, responseData, sizeof(int), sizeof(int));
+            Array.Copy(BitConverter.GetBytes(statusCode), 0, responseData, sizeof(int), sizeof(int));
             Array.Copy(data, 0, responseData, sizeof(int) * 2, data.Length);
             midiManager.AddConnectionResponse((byte)connectionID, responseData);
         }
 
-        public async void OpenWebSocketConnection(int connectionID, string uri, bool autoConvertResponses)
+        public async void OpenWebSocketConnection(int connectionID, Uri webUri, bool autoConvertResponses)
         {
-            Uri webUri;
-            try
-            {
-                webUri = new Uri(uri);
-            }
-            catch (UriFormatException e)
-            {
-                Console.WriteLine("URI incorrectly formatted: " + e.Message);
-                midiManager.SendWebSocketClosedResponse(connectionID);
-                return;
-            }
-
             webSockets[connectionID] = new ClientWebSocket();
             ClientWebSocket cws = webSockets[connectionID];
             try
@@ -121,10 +125,11 @@ namespace Udon_MIDI_Web_Helper
             wsAutoConvertMessages[connectionID] = autoConvertResponses;
             while (cws.State == WebSocketState.Open)
             {
-                WebSocketReceiveResult wssr;
+                WebSocketReceiveResult wssr = null;
                 try
                 {
-                    wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
+                    if (cws.State != WebSocketState.Aborted)
+                        wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
                 }
                 catch (WebSocketException e)
                 {

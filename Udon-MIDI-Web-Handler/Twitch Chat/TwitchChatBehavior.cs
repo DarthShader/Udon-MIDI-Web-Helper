@@ -27,7 +27,7 @@ public class TwitchChatBehavior : UdonSharpBehaviour
     int currentMessageCount;
 
     public VRCUrlInputField urlField;
-    public Text output;
+    public InputField output;
     public int maxChatLines = 42;
 
     void Start()
@@ -43,6 +43,7 @@ public class TwitchChatBehavior : UdonSharpBehaviour
             Networking.SetOwner(Networking.LocalPlayer, gameObject);
             syncedURL = urlField.GetUrl();
             Resync();
+            RequestSerialization();
         }
     }
 

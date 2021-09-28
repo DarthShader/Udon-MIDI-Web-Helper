@@ -111,6 +111,45 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         return connectionID;
     }
 
+    public int WebRequestPost(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String, string[] keys, string[] values) 
+    {
+        if (keys != null && keys.Length != values.Length)
+        {
+            Debug.LogError("[UdonMIDIWebHandler] Incorrect number of key/value arguments for POST request!  Keys length: " + keys.Length + " Values length: " + values.Length);
+            return -1;
+        }
+
+        int connectionID = getAvailableConnectionID();
+        if (connectionID != -1)
+        {
+            connectionRequesters[connectionID] = usb;
+            connectionIsWebSocket[connectionID] = false;
+            connectionReturnsStrings[connectionID] = returnUTF16String;
+            connectionsOpen++;
+
+            // Allow for full range of Basic Multilingual Plane UTF16 characters.
+            // (queries will be properly percent encoded by the helper program)
+            // Base64 encode the data because the output log doesn't
+            // play nice with certain special characters.  Also so a new log line can't be spoofed.
+            byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
+
+            string args = "";
+            if (keys != null && values != null)
+                for (int i=0; i<keys.Length; i++)
+                {
+                    string keyEncoded, valueEncoded;
+                    if (keys[i] == "") keyEncoded = "="; // Empty string key or value in post? Sure why not
+                    else keyEncoded = Convert.ToBase64String(EncodingUnicodeGetBytes(keys[i]));
+                    if (values[i] == "") valueEncoded = "=";
+                    else valueEncoded = Convert.ToBase64String(EncodingUnicodeGetBytes(values[i]));
+                    args += keyEncoded + " " + valueEncoded;
+                }
+
+            Debug.Log("[Udon-MIDI-Web-Helper] PST " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16 " : "UTF8 ") + args);
+        }
+        return connectionID;
+    }
+
     int getAvailableConnectionID()
     {
         int connectionID = -1;
@@ -123,6 +162,29 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         
         if (connectionID == -1)
             Debug.LogError("[UdonMIDIWebHandler] Too many web connections active at once!");
+        return connectionID;
+    }
+
+    public void StoreLocalValue(string key, string value, bool valueIsPublic, bool global)
+    {
+        string k = Convert.ToBase64String(EncodingUnicodeGetBytes(key));
+        string v = Convert.ToBase64String(EncodingUnicodeGetBytes(value));
+        Debug.Log("[Udon-MIDI-Web-Helper] STORE " + k + " " + v + (valueIsPublic ? " public" : " private") + (global ? " global" : ""));
+    }
+
+    public int RetrieveLocalValue(UdonSharpBehaviour usb, string key, string worldID)
+    {
+        int connectionID = getAvailableConnectionID();
+        if (connectionID != -1)
+        {
+            connectionRequesters[connectionID] = usb;
+            connectionIsWebSocket[connectionID] = false;
+            connectionReturnsStrings[connectionID] = true;
+            connectionsOpen++;
+
+            byte[] utf16Bytes = EncodingUnicodeGetBytes(key);
+            Debug.Log("[Udon-MIDI-Web-Helper] RETRIEVE " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + " " + worldID);
+        }
         return connectionID;
     }
 
