@@ -12,7 +12,7 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 # How to Use
 * Run this program any time before starting VRChat or before entering a MIDI-enabled VRChat world.  If the program is closed after doing so, VRChat will have to be closed and re-opened in order for the MIDI connection to work again.
 * Don't have other MIDI devices connected to your computer, otherwise the new [VRChat midi launch option](https://docs.vrchat.com/docs/launch-options) must be used to specify the "Udon-MIDI-Web-Helper" device.
-* Default and extended VRChat logging is supported.
+* Default and extended VRChat logging is supported.  However, in order to use web based authentication, **you must run VRChat with at least --log-debug-levels=API**
 
 # How to use in VRChat worlds
 Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp)
@@ -23,13 +23,20 @@ To make HTTP GET requests through UdonSharpBehaviours:
 1. Link a public variable to the singleton `UdonMIDIWebHandler`
 2. Add the variables `int connectionID`, `byte[] connectionData`, `string connectionString`, `int responseCode` to the behaviour
 3. Call `WebRequestGet()` on the handler, which returns an int ID for the connection that is opening.  This is useful for behaviours that need to open multiple connections.
-4. Implement a `public void WebRequestGetCallback()` function that the handler can call.  Before calling, it populates the `connectionID`, `connectionData`, `connectionString`, and `responseCode` variables.
+4. Implement a `public void WebRequestReceived()` function that the handler can call.  Before calling, it populates the `connectionID`, `connectionData`, `connectionString`, and `responseCode` variables.
 
 To use WebSocket connections through UdonSharpBehaviours:
 1. Link a public variable to the singleton `UdonMIDIWebHandler`
 2. Add the variables `int connectionID`, `byte[] connectionData`, `string connectionString`, `bool messageIsText` to the behaviour
 3. Call `WebSocketOpen()` on the handler, which returns a connection ID
 4. Implement the functions `public void WebSocketReceive()` and `public void WebSocketClosed()` which populate the previously listed variables before being called by the handler
+
+To use Local Storage Persistence through UdonSharpBehaviours:
+1. Link a public variable to the singleton `UdonMIDIWebHandler`
+2. Add the variables `int connectionID`, `byte[] connectionData`, `string connectionString`, `bool messageIsText` to the behaviour
+3. Call `StoreLocalValue()` on the handler to store key/value string pairs
+4. Call `RetrieveLocalValue()` on the handler to retrieve a key/value string pair
+5. To receive retrieved values, implement a `public void WebRequestReceived()` function that the handler can call.  Before calling, it populates the `connectionID`,  `connectionString`, and `responseCode` variables.  `connectionString` is the string value, and `responseCode` is an HTTP-like response code for whether or not the retrieve was successful or not
 
 More detailed examples for these systems are available in the provided unitypackage.
 
