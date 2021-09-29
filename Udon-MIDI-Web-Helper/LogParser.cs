@@ -571,7 +571,7 @@ namespace Udon_MIDI_Web_Helper
                                 {
                                     if (localStorage[saveDataWorldID].ContainsKey(key)) // key found
                                     {
-                                        if (localStorage[saveDataWorldID][key].valueIsPublic)
+                                        if (localStorage[saveDataWorldID][key].valueIsPublic || saveDataWorldID == worldID)
                                             webManager.AddGenericResponse(200, Encoding.Unicode.GetBytes(localStorage[saveDataWorldID][key].value), connectionID);
                                         else webManager.AddGenericResponse(403, Encoding.Unicode.GetBytes(""), connectionID);
                                     }
