@@ -41,4 +41,4 @@ To use Local Storage Persistence through UdonSharpBehaviours:
 More detailed examples for these systems are available in the provided unitypackage.
 
 # How to Build
-The program can be build with Visual Studio and the C# library wrapper included with [Tobias Erichsen's virtualMIDI SDK](http://www.tobias-erichsen.de/software/virtualmidi/virtualmidi-sdk.html)
+The program can be built with Visual Studio and the C# library wrapper included with [Tobias Erichsen's virtualMIDI SDK](http://www.tobias-erichsen.de/software/virtualmidi/virtualmidi-sdk.html)
