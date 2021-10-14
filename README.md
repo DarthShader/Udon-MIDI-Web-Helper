@@ -1,7 +1,7 @@
 ![icon](https://user-images.githubusercontent.com/42289116/112239883-b4314480-8c1d-11eb-812a-329190c426af.png)
 
 # Udon-MIDI-Web-Helper
-This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 256 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~100kbps.
+This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 255 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~100kbps.  It also comes with local storage options for worlds, so persistence can be achieved without needing a web server.
 
 # [Downloads (.exe and .unitypackage)](http://github.com/DarthShader/Udon-MIDI-Web-Helper/releases)
 
@@ -14,8 +14,17 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 * Don't have other MIDI devices connected to your computer, otherwise the new [VRChat midi launch option](https://docs.vrchat.com/docs/launch-options) must be used to specify the "Udon-MIDI-Web-Helper" device.
 * Default and extended VRChat logging is supported.  However, in order to use web based authentication, **you must launch VRChat with at least --log-debug-levels=API**
 
+# Known Limitations & Vulnerabilities
+* The entire protocol for this system is built on the expectation that VRChat will instantly crash if it receives more than 256 bytes of MIDI data in a signle frame.  Thus your actual throughput is always tied to your framerate.
+* You cannot use other MIDI devices in any VRChat world if you launched the game with this program.
+* Worlds with Udon behaviors that allow users to print arbitrary text to the output log are at risk of malicious users injecting helper program commands.  This is an even greater risk if these behaviors use synced strings.
+* Secure verification of the current world ID from the output log (useful for making sure worlds don't maliciously overwrite each others' local data or send malicious web requests to servers) uses **your active microphone list** as a fingerprint.  **It is recommended to change at least one active microphone on your computer to a unique, unguessable name - like a password** - so malicious worlds cannot attempt to impersonate a different world and potential overwrite your saved data.
+* Security keys are generated in a local data folder for each new web server that wants so authenticate you as a unique user.  You should treat the generated `.keys` file as a collection of local passwords.  If you lose that file, web servers will not be able to authenticate you and you will potentially lose remove user data.
+
 # How to use in VRChat worlds
-Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp)
+Requires [UdonSharp] (https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
+
+Currently requires the latest Open Beta build of VRChat (version 1137+)
 
 To add web conectivity to an Udon powered VRChat world, add a single copy of the provided prefab `UdonMIDIWebHandler`.  This contains a single UdonBehaviour through which all web connections and midi data passes.  
 
