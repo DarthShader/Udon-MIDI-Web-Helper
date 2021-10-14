@@ -104,6 +104,7 @@ namespace Udon_MIDI_Web_Helper
             catch (WebSocketException e)
             {
                 Console.WriteLine("Failed to open websocket: " + e.Message);
+                Console.WriteLine("Closing websocket connection " + connectionID);
                 midiManager.SendWebSocketClosedResponse(connectionID);
                 webSockets[connectionID] = null;
                 return;
@@ -128,12 +129,12 @@ namespace Udon_MIDI_Web_Helper
                 WebSocketReceiveResult wssr = null;
                 try
                 {
-                    if (cws.State != WebSocketState.Aborted)
-                        wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
+                    wssr = await cws.ReceiveAsync(wsBuffers[connectionID], ctSource.Token);
                 }
                 catch (WebSocketException e)
                 {
                     Console.WriteLine("WebSocketException: " + e.Message);
+                    Console.WriteLine("Closing websocket connection " + connectionID);
                     midiManager.SendWebSocketClosedResponse(connectionID);
                     webSockets[connectionID] = null;
                     break;
@@ -145,6 +146,7 @@ namespace Udon_MIDI_Web_Helper
                 catch (Exception e)
                 {
                     Console.WriteLine("WebSocket exception: " + e.Message);
+                    Console.WriteLine("Closing websocket connection " + connectionID);
                     midiManager.SendWebSocketClosedResponse(connectionID);
                     webSockets[connectionID] = null;
                     break;
@@ -169,10 +171,11 @@ namespace Udon_MIDI_Web_Helper
         {
             try
             {
+                // This method will most likely be called redundantly if the associated connection hasn't been
+                // following correct (read: .NET compatible - looking at you, twitch.tv) websocket protocols, and broken connections in Udon
+                // will want to force close a broken connection to be sure everything is flushed.
+                // This CloseAsync call is expected to fail regularly.
                 await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
-                // Ignore the queued ws messages yet to be sent, Udon has closed the connection
-                midiManager.ClearQueuedResponses(connectionID);
-                midiManager.SendWebSocketClosedResponse(connectionID);
             }
             catch (Exception e)
             {
@@ -188,7 +191,14 @@ namespace Udon_MIDI_Web_Helper
 
             try
             {
-                _ = webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), text ? WebSocketMessageType.Text : WebSocketMessageType.Binary, endOfMessage, ctSource.Token);
+                if (webSockets[connectionID] != null)
+                    _ = webSockets[connectionID].SendAsync(new ArraySegment<byte>(data), text ? WebSocketMessageType.Text : WebSocketMessageType.Binary, endOfMessage, ctSource.Token);
+                else
+                {
+                    Console.WriteLine("WebSocket message could not be sent, connection was unexpectedly closed.");
+                    Console.WriteLine("Closing websocket connection " + connectionID);
+                    midiManager.SendWebSocketClosedResponse(connectionID); // This may be a duplicate close message depending on how things were closed
+                }
             }
             catch (Exception e)
             {

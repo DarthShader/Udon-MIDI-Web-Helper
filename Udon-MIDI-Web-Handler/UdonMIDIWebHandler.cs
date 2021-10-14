@@ -5,12 +5,16 @@ using VRC.Udon;
 using UnityEngine.UI;
 using System;
 
+[UdonBehaviourSyncMode(BehaviourSyncMode.NoVariableSync)]
 public class UdonMIDIWebHandler : UdonSharpBehaviour
 {
     // Constants
     const int MAX_ACTIVE_CONNECTIONS = 256;
+    const int MAX_USABLE_CONNECTIONS = 255;
     const int MAX_USABLE_BYTES_PER_FRAME = 200;
     const float READY_TIMEOUT_SECONDS = 1.0f;
+    const float PING_INTERVAL_SECONDS = 10f;
+    const float PONG_TIMEOUT_SECONDS = 1.0f;
 
     // Connections management
     int connectionsOpen;
@@ -36,8 +40,29 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     int commandTypePackedState;
     int commandTypePackedByte;
 
+    // Callbacks
+    // _u_OnUdonMIDIWebHandlerOffline: called when a disconnect from the helper program has been detected
+    // _u_OnUdonMIDIWebHandlerOnline: called when the helper program has been detected
+    // Online satus is supposed to be "read only" - not in the C# scuffed readonly keyword sense - but in the Get-only-accessor-property sense
+    // But since making an actual function accessor currently has a runtime performance cost in UdonSharp and isn't a compile time abstraction,
+    // I'm going to leave it public until something changes @Merlin @Synergiance :)
+    [HideInInspector]
+    public bool online;
+    bool awaitingPong;
+    UdonSharpBehaviour[] _registeredCallbackReceivers;
+
     // Update loop
     float secondsSinceLastReady;
+    float secondsSinceLastPing = PING_INTERVAL_SECONDS;
+    float secondsSinceLastPong;
+
+    public float _u_GetProgress(int connectionID)
+    {
+        if (connectionData[connectionID] == null) 
+            return 0f;
+        else 
+            return (float)connectionDataOffsets[connectionID] / (float)connectionData[connectionID].Length;
+    }
 
     void Start()
     {
@@ -49,6 +74,8 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         connectionIsWebSocket = new bool[MAX_ACTIVE_CONNECTIONS];
         connectionReturnsStrings = new bool[MAX_ACTIVE_CONNECTIONS];
         currentFrame = new byte[MAX_USABLE_BYTES_PER_FRAME];
+        if (_registeredCallbackReceivers == null)
+            _registeredCallbackReceivers = new UdonSharpBehaviour[0];
 
         // Reset the state of the helper
         Debug.Log("[Udon-MIDI-Web-Helper] RST");
@@ -62,25 +89,51 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         // entering a new world with an instance of this behavior.
         for (int i=0; i<MAX_ACTIVE_CONNECTIONS; i++)
             if (connectionRequesters[i] != null && connectionIsWebSocket[i])
-                WebSocketClose(i);
+                _u_WebSocketClose(i);
     }
 
     void Update()
     {
-        // VRChat's update order for Udon appears to go: Update(), LateUpdate(), MidiNoteX(), at least
-        // with VRC Midi Listener after Udon Behaviour on the same gameobject.
-        // Therefore, it is safe to print a RDY or ACK in Update() without waiting a game tick.
-        // Hopefully this means the Log-MIDI communication is fast enough to send a new frame
-        // before the game tick expires, ideally resulting in one MIDI frame every game tick.
-        if (currentFrameOffset == usableBytesThisFrame)
+        secondsSinceLastPing += Time.deltaTime;
+        if (secondsSinceLastPing > PING_INTERVAL_SECONDS)
         {
-            Debug.Log("[Udon-MIDI-Web-Helper] ACK");
-            currentFrameOffset = 0;
-            secondsSinceLastReady = 0; // Don't send a ready, ACK doubles as a ready
+            // Ping the helper program using a dedicated command, on a dedicated connection ID.
+            // The loopback response from this has priority over all 255 other connections.
+            // This is done on a dedicated connectionID to ensure it is received like all other
+            // MIDI frames, and to make sure there's always a free, prioritized line for auxiliary data.
+            Debug.Log("[Udon-MIDI-Web-Helper] PING");
+            secondsSinceLastPing = 0;
+            awaitingPong = true;
+            connectionIsWebSocket[255] = true;
+            connectionReturnsStrings[255] = true;
+            connectionsOpen++;
+        }
+
+        if (awaitingPong)
+        {
+            secondsSinceLastPong += Time.deltaTime;
+            if (secondsSinceLastPong > PONG_TIMEOUT_SECONDS && online)
+            {
+                SendCallback("_u_OnUdonMIDIWebHandlerOffline");
+                online = false;
+            }
         }
 
         if (connectionsOpen > 0)
         {
+            // VRChat's update order for Udon appears to go: Update(), LateUpdate(), MidiNoteX(), at least
+            // with VRC Midi Listener after Udon Behaviour on the same gameobject.
+            // Therefore, it should be safe to print a RDY or ACK each frame without waiting a game tick.
+            // (This whole protocol is built around VRChat crashing if more than 1 midi frame of data is recevied per game tick)
+            // Hopefully this means the Log-MIDI communication is fast enough to send a new frame
+            // before the game loops around again, ideally resulting in one MIDI frame every game tick.
+            if (currentFrameOffset == usableBytesThisFrame)
+            {
+                Debug.Log("[Udon-MIDI-Web-Helper] ACK");
+                currentFrameOffset = 0;
+                secondsSinceLastReady = 0; // Don't send a ready, ACK doubles as a ready
+            }
+
             secondsSinceLastReady += Time.deltaTime;
             if (secondsSinceLastReady > READY_TIMEOUT_SECONDS)
             {
@@ -91,9 +144,9 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         }
     }
 
-    public int WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String) 
+    public int _u_WebRequestGet(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String) 
     {
-        int connectionID = getAvailableConnectionID();
+        int connectionID = _u_getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
@@ -105,13 +158,13 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             // (queries will be properly percent encoded by the helper program)
             // Base64 encode the data because the output log doesn't
             // play nice with certain special characters.  Also so a new log line can't be spoofed.
-            byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
+            byte[] utf16Bytes = _u_EncodingUnicodeGetBytes(uri);
             Debug.Log("[Udon-MIDI-Web-Helper] GET " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : ""));
         }
         return connectionID;
     }
 
-    public int WebRequestPost(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String, string[] keys, string[] values) 
+    public int _u_WebRequestPost(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String, string[] keys, string[] values) 
     {
         if (keys != null && keys.Length != values.Length)
         {
@@ -119,7 +172,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             return -1;
         }
 
-        int connectionID = getAvailableConnectionID();
+        int connectionID = _u_getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
@@ -131,7 +184,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             // (queries will be properly percent encoded by the helper program)
             // Base64 encode the data because the output log doesn't
             // play nice with certain special characters.  Also so a new log line can't be spoofed.
-            byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
+            byte[] utf16Bytes = _u_EncodingUnicodeGetBytes(uri);
 
             string args = "";
             if (keys != null && values != null)
@@ -139,22 +192,22 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 {
                     string keyEncoded, valueEncoded;
                     if (keys[i] == "") keyEncoded = "="; // Empty string key or value in post? Sure why not
-                    else keyEncoded = Convert.ToBase64String(EncodingUnicodeGetBytes(keys[i]));
+                    else keyEncoded = Convert.ToBase64String(_u_EncodingUnicodeGetBytes(keys[i]));
                     if (values[i] == "") valueEncoded = "=";
-                    else valueEncoded = Convert.ToBase64String(EncodingUnicodeGetBytes(values[i]));
-                    args += keyEncoded + " " + valueEncoded;
+                    else valueEncoded = Convert.ToBase64String(_u_EncodingUnicodeGetBytes(values[i]));
+                    args += " " + keyEncoded + " " + valueEncoded;
                 }
 
-            Debug.Log("[Udon-MIDI-Web-Helper] PST " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16 " : "UTF8 ") + args);
+            Debug.Log("[Udon-MIDI-Web-Helper] PST " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : "UTF8") + args);
         }
         return connectionID;
     }
 
-    int getAvailableConnectionID()
+    int _u_getAvailableConnectionID()
     {
         int connectionID = -1;
-        for (int i=0; i<MAX_ACTIVE_CONNECTIONS; i++)
-            if (connectionData[i] == null)
+        for (int i=0; i<MAX_USABLE_CONNECTIONS; i++)
+            if (connectionRequesters[i] == null)
             {
                 connectionID = i;
                 break;
@@ -165,16 +218,16 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         return connectionID;
     }
 
-    public void StoreLocalValue(string key, string value, bool valueIsPublic, bool global)
+    public void _u_StoreLocalValue(string key, string value, bool valueIsPublic, bool global)
     {
-        string k = Convert.ToBase64String(EncodingUnicodeGetBytes(key));
-        string v = Convert.ToBase64String(EncodingUnicodeGetBytes(value));
+        string k = Convert.ToBase64String(_u_EncodingUnicodeGetBytes(key));
+        string v = Convert.ToBase64String(_u_EncodingUnicodeGetBytes(value));
         Debug.Log("[Udon-MIDI-Web-Helper] STORE " + k + " " + v + (valueIsPublic ? " public" : " private") + (global ? " global" : ""));
     }
 
-    public int RetrieveLocalValue(UdonSharpBehaviour usb, string key, string worldID)
+    public int _u_RetrieveLocalValue(UdonSharpBehaviour usb, string key, string worldID)
     {
-        int connectionID = getAvailableConnectionID();
+        int connectionID = _u_getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
@@ -182,30 +235,37 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
             connectionReturnsStrings[connectionID] = true;
             connectionsOpen++;
 
-            byte[] utf16Bytes = EncodingUnicodeGetBytes(key);
-            Debug.Log("[Udon-MIDI-Web-Helper] RETRIEVE " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + " " + worldID);
+            byte[] utf16Bytes = _u_EncodingUnicodeGetBytes(key);
+            byte[] worldIDBytes = _u_EncodingUnicodeGetBytes(worldID);
+            Debug.Log("[Udon-MIDI-Web-Helper] RETRIEVE " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + " " + Convert.ToBase64String(worldIDBytes));
         }
         return connectionID;
     }
 
-    public int WebSocketOpen(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String)
+    public void _u_OpenWebPage(string uri) 
     {
-        int connectionID = getAvailableConnectionID();
+        byte[] utf16Bytes = _u_EncodingUnicodeGetBytes(uri);
+        Debug.Log("[Udon-MIDI-Web-Helper] OPEN "+ Convert.ToBase64String(utf16Bytes));
+    }
+
+    public int _u_WebSocketOpen(string uri, UdonSharpBehaviour usb, bool autoConvertToUTF16, bool returnUTF16String)
+    {
+        int connectionID = _u_getAvailableConnectionID();
         if (connectionID != -1)
         {
             connectionRequesters[connectionID] = usb;
             connectionIsWebSocket[connectionID] = true;
             connectionReturnsStrings[connectionID] = returnUTF16String;
             connectionsOpen++;
-            byte[] utf16Bytes = EncodingUnicodeGetBytes(uri);
+            byte[] utf16Bytes = _u_EncodingUnicodeGetBytes(uri);
             Debug.Log("[Udon-MIDI-Web-Helper] WSO " + connectionID + " " + Convert.ToBase64String(utf16Bytes) + (autoConvertToUTF16 ? " UTF16" : ""));
         }
         return connectionID;
     }
 
-    public void WebSocketClose(int connectionID)
+    public void _u_WebSocketClose(int connectionID)
     {
-        if (connectionID < 0 || connectionID >= MAX_ACTIVE_CONNECTIONS)
+        if (connectionID < 0 || connectionID >= MAX_USABLE_CONNECTIONS)
         {
             Debug.LogError("[UdonMIDIWebHandler] connectionID: Argument out of range");
             return;
@@ -215,26 +275,46 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         {
             Debug.Log("[Udon-MIDI-Web-Helper] WSC " + connectionID);
 
-            // Don't close connection immediately, there could be some queued data for this connection.
-            // Wait for an official 'connection close' MIDI command
-            //connectionData[currentID] = null;
-            //connectionDataOffsets[currentID] = 0;
-            //connectionRequesters[currentID] = null;
-            //connectionsOpen--;
+            // Clear existing data and wait for the full close midi response from the helper program.
+            connectionData[currentID] = null;
+            connectionDataOffsets[currentID] = 0;
+            connectionDataChars[connectionID] = null;
+            connectionDataCharsOffsets[connectionID] = 0;
         }
+        else Debug.Log("[UdonMIDIWebHandler] Error: Provided connectionID isn't a WebSocket connection.");
     }
 
-    public void WebSocketSendStringASCII(int connectionID, string s)
+    public void _u_WebSocketClear(int connectionID)
     {
-        WebSocketSend(connectionID, EncodingASCIIGetBytes(s), true, true, false);
+        if (connectionID < 0 || connectionID >= MAX_USABLE_CONNECTIONS)
+        {
+            Debug.LogError("[UdonMIDIWebHandler] connectionID: Argument out of range");
+            return;
+        }
+
+        // Reset connection data for connectionID in case a response is in the
+        // middle of being sent.  The helper program also clears incomplete responses.
+        connectionData[connectionID] = null;
+        connectionDataOffsets[connectionID] = 0;
+        connectionDataChars[connectionID] = null;
+        connectionDataCharsOffsets[connectionID] = 0;
+
+        if (connectionIsWebSocket[connectionID])
+            Debug.Log("[Udon-MIDI-Web-Helper] CLR " + connectionID);
+        else Debug.Log("[UdonMIDIWebHandler] Error: Provided connectionID isn't a WebSocket connection.");
     }
 
-    public void WebSocketSendStringUnicode(int connectionID, string s, bool autoConvertToUTF8)
+    public void _u_WebSocketSendStringASCII(int connectionID, string s)
     {
-        WebSocketSend(connectionID, EncodingUnicodeGetBytes(s), true, true, autoConvertToUTF8);
+        _u_WebSocketSend(connectionID, _u_EncodingASCIIGetBytes(s), true, true, false);
     }
 
-    public void WebSocketSend(int connectionID, byte[] data, bool messageIsText, bool endOfMessage, bool autoConvertToUTF8)
+    public void _u_WebSocketSendStringUnicode(int connectionID, string s, bool autoConvertToUTF8)
+    {
+        _u_WebSocketSend(connectionID, _u_EncodingUnicodeGetBytes(s), true, true, autoConvertToUTF8);
+    }
+
+    public void _u_WebSocketSend(int connectionID, byte[] data, bool messageIsText, bool endOfMessage, bool autoConvertToUTF8)
     {
         // Other UdonBehaviors will have to convert their own strings to bytes,
         // becuase it is unknown what encoding the string may be in.  The same
@@ -243,7 +323,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         // automatically done here.  Two helper functions are available, though.
         // It may also be beneficial for other behaviors to time slice convert
         // their strings if the data that needs to be sent hitches on the helper functions.
-        if (connectionID < 0 || connectionID >= MAX_ACTIVE_CONNECTIONS)
+        if (connectionID < 0 || connectionID >= MAX_USABLE_CONNECTIONS)
         {
             Debug.LogError("[UdonMIDIWebHandler] connectionID: Argument out of range");
             return;
@@ -257,15 +337,15 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
     public override void MidiNoteOn(int channel, int number, int velocity)
     {
-        ReceiveDataCommand(0x0, channel, number, velocity);
+        _u_ReceiveDataCommand(0x0, channel, number, velocity);
     }
 
     public override void MidiNoteOff(int channel, int number, int velocity)
     {
-        ReceiveDataCommand(0x1, channel, number, velocity);
+        _u_ReceiveDataCommand(0x1, channel, number, velocity);
     }
 
-    void ReceiveDataCommand(int commandTypeBit, int channel, int number, int velocity)
+    void _u_ReceiveDataCommand(int commandTypeBit, int channel, int number, int velocity)
     {
         if (ignoreThisFrame) return;
 
@@ -324,7 +404,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
 
         // Check for complete midi frame
         if (currentFrameOffset == usableBytesThisFrame)
-            ReceiveFrame();
+            _u_ReceiveFrame();
     }
 
     public override void MidiControlChange(int channel, int number, int velocity)
@@ -371,7 +451,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         commandTypePackedByte = 0;
     }
 
-    void ReceiveFrame()
+    void _u_ReceiveFrame()
     {
         // If this is the first frame of a response, use the first 4 bytes to allocate a buffer for it
         if (connectionData[currentID] == null)
@@ -414,30 +494,49 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         }
 
         if (connectionDataOffsets[currentID] == connectionData[currentID].Length)
-            ReceiveResponse();
+            _u_ReceiveResponse();
     }
 
-    void ReceiveResponse()
+    void _u_ReceiveResponse()
     {
         // Requies convention public variable and event names
         UdonSharpBehaviour usb = connectionRequesters[currentID];
-        usb.SetProgramVariable("connectionID", currentID);
         if (connectionIsWebSocket[currentID])
         {
             // First byte is the text/binary flag, with highest bit indiciating
             // that this is a dummy 'connection closed' response.
             bool connectionClosedResponse = (connectionData[currentID][0] & 0x80) == 0x80;
             bool connectionOpenedResponse = (connectionData[currentID][0] & 0x40) == 0x40;
-            if (connectionOpenedResponse)
-                usb.SendCustomEvent("WebSocketOpened");
+            if (connectionClosedResponse && connectionOpenedResponse)
+            {
+                // Special ping response, reuses the websocket header bits.
+                // This was originally going to be a special exception to the MIDI protocol,
+                // but then I realized it always needs a reserved connectionID to have
+                // priority over other connections and to be received by the existing MIDI parsing functions.
+                // So this half-special-websocket-header half-dedicated-connection-response implementation
+                // will do for now unless there are problems in the future.
+                if (online == false)
+                    SendCallback("_u_OnUdonMIDIWebHandlerOnline");
+                online = true;
+                awaitingPong = false;
+                secondsSinceLastPong = 0f;
+                connectionsOpen--;
+            }
+            else if (connectionOpenedResponse)
+            {
+                usb.SetProgramVariable("connectionID", currentID);
+                usb.SendCustomEvent("_u_WebSocketOpened");
+            }
             else if (connectionClosedResponse)
             {
-                usb.SendCustomEvent("WebSocketClosed");
+                usb.SetProgramVariable("connectionID", currentID);
+                usb.SendCustomEvent("_u_WebSocketClosed");
                 connectionRequesters[currentID] = null;
                 connectionsOpen--;
             }
             else
             {
+                usb.SetProgramVariable("connectionID", currentID);
                 bool messageIsText = (connectionData[currentID][0] & 0x1) == 0x0;
                 byte[] messsageData = new byte[connectionData[currentID].Length-1];
                 Array.Copy(connectionData[currentID], 1, messsageData, 0, connectionData[currentID].Length-1);
@@ -446,13 +545,14 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                     usb.SetProgramVariable("connectionString", new string(connectionDataChars[currentID]));
                 else
                     usb.SetProgramVariable("connectionData", messsageData);
-                usb.SendCustomEvent("WebSocketReceive");
+                usb.SendCustomEvent("_u_WebSocketReceive");
             }
         }
         else
         {
+            usb.SetProgramVariable("connectionID", currentID);
             // First 4 bytes of data are an int for HTTP response code or request error code
-            int responseCode = BitConverterToInt32(connectionData[currentID], 0);
+            int responseCode = _u_BitConverterToInt32(connectionData[currentID], 0);
             byte[] responseData = new byte[connectionData[currentID].Length-4];
             Array.Copy(connectionData[currentID], 4, responseData, 0, connectionData[currentID].Length-4);
 
@@ -461,7 +561,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
                 usb.SetProgramVariable("connectionString", new string(connectionDataChars[currentID]));
             else
                 usb.SetProgramVariable("connectionData", responseData);
-            usb.SendCustomEvent("WebRequestReceived");
+            usb.SendCustomEvent("_u_WebRequestReceived");
             connectionRequesters[currentID] = null;
             connectionsOpen--;
         }
@@ -472,7 +572,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     }
 
     // SystemBitConverter.__ToInt32__SystemByteArray_SystemInt32__SystemInt32 is not exposed in Udon
-    int BitConverterToInt32(byte[] data, int startIndex)
+    int _u_BitConverterToInt32(byte[] data, int startIndex)
     {
         int result = data[startIndex++];
         result |= data[startIndex++] << 8;
@@ -482,7 +582,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     }
 
     // SystemTextEncoding.__get_Unicode__SystemTextEncoding is not exposed in Udon
-    byte[] EncodingUnicodeGetBytes(string s)
+    byte[] _u_EncodingUnicodeGetBytes(string s)
     {
         byte[] data = new byte[s.Length * 2];
         int offset = 0;
@@ -496,7 +596,7 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
     }
 
     // SystemTextEncoding.__get_ASCII__SystemTextEncoding is not exposed in Udon
-    byte[] EncodingASCIIGetBytes(string s)
+    byte[] _u_EncodingASCIIGetBytes(string s)
     {
         byte[] data = new byte[s.Length];
         for (int i=0; i<s.Length; i++)
@@ -528,4 +628,74 @@ public class UdonMIDIWebHandler : UdonSharpBehaviour
         return new string(chars);
     }
     */
+
+// Shamelessly taken from USharpVideoPlayer.  Thanks Merlin
+#region Callback Receivers
+        /// <summary>
+        /// Registers an UdonSharpBehaviour as a callback receiver for events that happen on this behavior.
+        /// Callback receivers can be used to react to state changes on the behavior without needing to check periodically.
+        /// </summary>
+        /// <param name="callbackReceiver"></param>
+        public void RegisterCallbackReceiver(UdonSharpBehaviour callbackReceiver)
+        {
+            if (!Utilities.IsValid(callbackReceiver))
+                return;
+
+            if (_registeredCallbackReceivers == null)
+                _registeredCallbackReceivers = new UdonSharpBehaviour[0];
+
+            foreach (UdonSharpBehaviour currReceiver in _registeredCallbackReceivers)
+            {
+                if (callbackReceiver == currReceiver)
+                    return;
+            }
+
+            UdonSharpBehaviour[] newControlHandlers = new UdonSharpBehaviour[_registeredCallbackReceivers.Length + 1];
+            _registeredCallbackReceivers.CopyTo(newControlHandlers, 0);
+            _registeredCallbackReceivers = newControlHandlers;
+
+            _registeredCallbackReceivers[_registeredCallbackReceivers.Length - 1] = callbackReceiver;
+        }
+
+        public void UnregisterCallbackReceiver(UdonSharpBehaviour callbackReceiver)
+        {
+            if (!Utilities.IsValid(callbackReceiver))
+                return;
+
+            if (_registeredCallbackReceivers == null)
+                _registeredCallbackReceivers = new UdonSharpBehaviour[0];
+
+            int callbackReceiverCount = _registeredCallbackReceivers.Length;
+            for (int i = 0; i < callbackReceiverCount; ++i)
+            {
+                UdonSharpBehaviour currHandler = _registeredCallbackReceivers[i];
+
+                if (callbackReceiver == currHandler)
+                {
+                    UdonSharpBehaviour[] newCallbackReceivers = new UdonSharpBehaviour[callbackReceiverCount - 1];
+
+                    for (int j = 0; j < i; ++j)
+                        newCallbackReceivers[j] = _registeredCallbackReceivers[j];
+
+                    for (int j = i + 1; j < callbackReceiverCount; ++j)
+                        newCallbackReceivers[j - 1] = _registeredCallbackReceivers[j];
+
+                    _registeredCallbackReceivers = newCallbackReceivers;
+
+                    return;
+                }
+            }
+        }
+
+        void SendCallback(string callbackName)
+        {
+            foreach (UdonSharpBehaviour callbackReceiver in _registeredCallbackReceivers)
+            {
+                if (Utilities.IsValid(callbackReceiver))
+                {
+                    callbackReceiver.SendCustomEvent(callbackName);
+                }
+            }
+        }
+#endregion
 }

@@ -5,6 +5,7 @@ using VRC.SDKBase;
 using VRC.Udon;
 using UnityEngine.UI;
 
+[UdonBehaviourSyncMode(BehaviourSyncMode.NoVariableSync)]
 public class UdonWebSocketExample : UdonSharpBehaviour
 {
     // Link this behaviour to the centralized web handler
@@ -23,20 +24,20 @@ public class UdonWebSocketExample : UdonSharpBehaviour
     // Simply log-style display
     public InputField output;
 
-    public void UrlEntered()
+    public void _u_UrlEntered()
     {
         // This function is called from urlField's end editing event
 
         // Close existing connection if one is already open
         if (connectionID != -1)
-            webManager.WebSocketClose(connectionID);
+            webManager._u_WebSocketClose(connectionID);
 
         // WebSocketOpen() arguments:
         // string uri: The URI of the webpage to retrieve (must begin with ws:// or wss://)
         // UdonSharpBehaviour usb: Takes a reference of the behaviour to call WebSocketReceive() and WebSocketClosed() on
         // bool autoConvertToUTF16: Option to convert received text messages from UTF8 to UTF16 automatically to properly display in UnityUI
         // bool returnUTF16String: Option to efficiently convert received text messages to a string before calling WebSocketReceive()
-        connectionID = webManager.WebSocketOpen(urlField.text, this, true, true);
+        connectionID = webManager._u_WebSocketOpen(urlField.text, this, true, true);
         if (connectionID == -1)
             output.text = "Too many active connections!\n";
     }
@@ -64,20 +65,20 @@ public class UdonWebSocketExample : UdonSharpBehaviour
         // bool autoConvertToUTF8: Option to automatically convert provided message data from Unicode to UTF8 before sending
 
         if (connectionID != -1)
-            webManager.WebSocketSendStringUnicode(connectionID, messageField.text, true);
+            webManager._u_WebSocketSendStringUnicode(connectionID, messageField.text, true);
     }
 
-    public void WebSocketReceive(/* int connectionID, byte[] connectionData, string connectionString, bool messageIsText */)
+    public void _u_WebSocketReceive(/* int connectionID, byte[] connectionData, string connectionString, bool messageIsText */)
     {
         output.text += connectionString + '\n';
     }
 
-    public void WebSocketOpened(/* int connectionID */)
+    public void _u_WebSocketOpened(/* int connectionID */)
     {
         output.text = "WebSocket Opened\n";
     }
 
-    public void WebSocketClosed(/* int connectionID */)
+    public void _u_WebSocketClosed(/* int connectionID */)
     {
         output.text += "WebSocket Closed";
         connectionID = -1;
