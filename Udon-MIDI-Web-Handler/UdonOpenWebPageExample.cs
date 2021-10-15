@@ -13,6 +13,8 @@ public class UdonOpenWebPageExample : UdonSharpBehaviour
 
     public override void Interact()
     {
+        // This is currently rate limited in the helper program
+        // to 1 web page per second to prevent abuse.
         webManager._u_OpenWebPage(url);
     }
 }

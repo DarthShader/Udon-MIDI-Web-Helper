@@ -42,6 +42,13 @@ namespace Udon_MIDI_Web_Helper
                 two.Write(value);
             }
 
+            public override void WriteLine(string value)
+            {
+                var time = DateTime.Now.ToString();
+                one.WriteLine(time + " " + value);
+                two.WriteLine(time + " " + value);
+            }
+
         }
 
         public ConsoleCopy(string path)

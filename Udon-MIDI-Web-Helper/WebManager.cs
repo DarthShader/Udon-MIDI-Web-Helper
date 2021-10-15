@@ -11,6 +11,8 @@ namespace Udon_MIDI_Web_Helper
     class WebManager
     {
         public const int WEBSOCKET_BUFFER_SIZE = 10000;
+        const long OPEN_WEB_PAGE_TIMEOUT_MS = 1000;
+        const int WEB_REQUEST_FAILED_ERROR_CODE = 111;
 
         HttpClient httpClient;
         MIDIManager midiManager;
@@ -18,6 +20,8 @@ namespace Udon_MIDI_Web_Helper
         CancellationTokenSource ctSource;
         ArraySegment<byte>[] wsBuffers;
         bool[] wsAutoConvertMessages;
+        List<string> cachedPrivateHostnames;
+        long lastOpenedWebPage;
 
         public CancellationTokenSource CTSource
         {
@@ -30,21 +34,97 @@ namespace Udon_MIDI_Web_Helper
         public WebManager(MIDIManager m)
         {
             midiManager = m;
+            cachedPrivateHostnames = new List<string>();
             Reset();
+        }
+
+        bool HostnameIsPrivateIPAddress(Uri uri)
+        {
+            if (cachedPrivateHostnames.Contains(uri.DnsSafeHost))
+            {
+                Console.WriteLine("Attempted web request to local IP address blocked!");
+                return true;
+            }
+
+            IPAddress ip;
+            try
+            {
+                if (uri.HostNameType == UriHostNameType.Dns)
+                    ip = Dns.GetHostAddresses(uri.DnsSafeHost)[0];
+                else ip = IPAddress.Parse(uri.DnsSafeHost);
+                string ipString = ip.ToString();
+                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    string[] args = ipString.Split('.');
+                    int arg1 = Int32.Parse(args[1]);
+                    if (args[0] == "10" ||
+                        (args[0] == "172" && arg1 >= 16 && arg1 <= 31) ||
+                        (args[0] == "192" && arg1 == 168))
+                    {
+                        cachedPrivateHostnames.Add(uri.DnsSafeHost);
+                        Console.WriteLine("Attempted web request to local IP address blocked!");
+                        return true;
+                    }
+                }
+                else if (ipString.StartsWith("fd"))
+                {
+                    cachedPrivateHostnames.Add(uri.DnsSafeHost);
+                    Console.WriteLine("Attempted web request to local IP address blocked!");
+                    return true;
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("Error resolving hostname IP address: " + e.Message);
+                return true;
+            }
+            
+            return false;
+        }
+
+        public void OpenWebPage(Uri webUri)
+        {
+            long currentTimestamp = DateTime.Now.Ticks / TimeSpan.TicksPerMillisecond;
+            if (currentTimestamp < lastOpenedWebPage + OPEN_WEB_PAGE_TIMEOUT_MS)
+                return;
+            lastOpenedWebPage = currentTimestamp;
+
+            // Block all non-internet IP address
+            if (HostnameIsPrivateIPAddress(webUri))
+                return;
+
+            if (webUri.Scheme != Uri.UriSchemeHttp && webUri.Scheme != Uri.UriSchemeHttps)
+            {
+                Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
+                return;
+            }
+
+            Console.WriteLine("Opening web page: " + webUri.AbsoluteUri);
+            System.Diagnostics.Process.Start(webUri.AbsoluteUri);
         }
 
         public async void GetWebRequest(int connectionID, Uri webUri, bool autoConvertResponse)
         {
+            // Block all non-internet IP address
+            if (HostnameIsPrivateIPAddress(webUri))
+                return;
+
+            if (webUri.Scheme != Uri.UriSchemeHttp && webUri.Scheme != Uri.UriSchemeHttps)
+            {
+                Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
+                return;
+            }
+
             HttpResponseMessage response;
             try
             {
                 response = await httpClient.GetAsync(webUri, ctSource.Token);
-                
             }
             catch (Exception e)
             {
                 Console.WriteLine("HTTP request failed: " + e.Message);
-                midiManager.SendWebRequestFailedResponse(connectionID);
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
             }
 
@@ -53,6 +133,17 @@ namespace Udon_MIDI_Web_Helper
 
         public async void PostWebRequest(int connectionID, Uri webUri, bool autoConvertResponse, Dictionary<string, string> args)
         {
+            // Block all non-internet IP address
+            if (HostnameIsPrivateIPAddress(webUri))
+                return;
+
+            if (webUri.Scheme != Uri.UriSchemeHttp && webUri.Scheme != Uri.UriSchemeHttps)
+            {
+                Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
+                return;
+            }
+
             HttpResponseMessage response;
             try
             {
@@ -61,7 +152,7 @@ namespace Udon_MIDI_Web_Helper
             catch (Exception e)
             {
                 Console.WriteLine("HTTP POST request failed: " + e.Message);
-                midiManager.SendWebRequestFailedResponse(connectionID);
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
             }
 
@@ -95,6 +186,16 @@ namespace Udon_MIDI_Web_Helper
 
         public async void OpenWebSocketConnection(int connectionID, Uri webUri, bool autoConvertResponses)
         {
+            // Block all non-internet IP address
+            if (HostnameIsPrivateIPAddress(webUri))
+                return;
+
+            if (webUri.Scheme != "ws" && webUri.Scheme != "wss")
+            {
+                Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
+                return;
+            }
+
             webSockets[connectionID] = new ClientWebSocket();
             ClientWebSocket cws = webSockets[connectionID];
             try
@@ -175,7 +276,14 @@ namespace Udon_MIDI_Web_Helper
                 // following correct (read: .NET compatible - looking at you, twitch.tv) websocket protocols, and broken connections in Udon
                 // will want to force close a broken connection to be sure everything is flushed.
                 // This CloseAsync call is expected to fail regularly.
-                await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
+                if (webSockets[connectionID] != null)
+                    await webSockets[connectionID].CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ctSource.Token);
+                else
+                {
+                    Console.WriteLine("WebSocket was already closed.");
+                    Console.WriteLine("Closing websocket connection " + connectionID);
+                    midiManager.SendWebSocketClosedResponse(connectionID);
+                }
             }
             catch (Exception e)
             {

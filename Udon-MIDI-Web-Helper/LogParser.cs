@@ -12,7 +12,9 @@ namespace Udon_MIDI_Web_Helper
     {
         const int MAX_BYTES_PER_LINE = 100000;
         byte[] lineSeparator = Encoding.UTF8.GetBytes("\n\n\r\n");
-        const int MAX_HOSTS_PER_WORLD = 10;
+        const int WEB_REQUEST_FAILED_ERROR_CODE = 111;
+        const int EXTENDED_LOGGING_UNAVAILABLE_ERROR_CODE = 112;
+        const int MAX_HOSTS_PER_WORLD = 100;
         const string STORAGE_FOLDER = "Udon-MIDI-Web-Helper_data";
         const string KEYS_FILENAME = "Udon-MIDI-Web-Helper.keys";
 
@@ -369,7 +371,7 @@ namespace Udon_MIDI_Web_Helper
                 catch (UriFormatException e)
                 {
                     Console.WriteLine("URI incorrectly formatted: " + e.Message);
-                    midiManager.SendWebRequestFailedResponse(connectionID);
+                    midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                     return;
                 }
                 bool autoConvertResponse = false;
@@ -407,7 +409,7 @@ namespace Udon_MIDI_Web_Helper
                 catch (UriFormatException e)
                 {
                     Console.WriteLine("URI incorrectly formatted: " + e.Message);
-                    midiManager.SendWebRequestFailedResponse(connectionID);
+                    midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                     return;
                 }
 
@@ -436,6 +438,7 @@ namespace Udon_MIDI_Web_Helper
                         else
                         {
                             Console.WriteLine("Error: Web request needs verified userID.  Launch VRChat with --log-debug-levels=API");
+                            midiManager.SendWebRequestFailedResponse(connectionID, EXTENDED_LOGGING_UNAVAILABLE_ERROR_CODE);
                             return;
                         }
                     }
@@ -446,6 +449,7 @@ namespace Udon_MIDI_Web_Helper
                         if (userID == null)
                         {
                             Console.WriteLine("Error: Web request needs verified userID.  Launch VRChat with --log-debug-levels=API");
+                            midiManager.SendWebRequestFailedResponse(connectionID, EXTENDED_LOGGING_UNAVAILABLE_ERROR_CODE);
                             return;
                         }
                         else
@@ -475,6 +479,7 @@ namespace Udon_MIDI_Web_Helper
                             else
                             {
                                 Console.WriteLine("Error: VRChat world attempted to register too many (" + MAX_HOSTS_PER_WORLD + ") different passwords.");
+                                midiManager.SendWebRequestFailedResponse(connectionID, EXTENDED_LOGGING_UNAVAILABLE_ERROR_CODE);
                                 return;
                             }
                         }
@@ -650,10 +655,10 @@ namespace Udon_MIDI_Web_Helper
 
         void Open(string[] args)
         {
-            string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[1]));
             Uri webUri;
             try
             {
+                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[1]));
                 webUri = new Uri(uriDecoded);
             }
             catch (UriFormatException e)
@@ -662,12 +667,7 @@ namespace Udon_MIDI_Web_Helper
                 return;
             }
 
-            if (webUri.Scheme == "http" || webUri.Scheme == "https")
-            {
-                Console.WriteLine("Opening web page: " + webUri.AbsoluteUri);
-                System.Diagnostics.Process.Start(webUri.AbsoluteUri);
-            }
-            else Console.WriteLine("World attempted to open unsupported URI: " + webUri.AbsoluteUri);
+            webManager.OpenWebPage(webUri);
         }
 
         void ProcessLogLine(string line)

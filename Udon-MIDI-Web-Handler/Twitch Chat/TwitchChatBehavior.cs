@@ -74,6 +74,8 @@ public class TwitchChatBehavior : UdonSharpBehaviour
 
     public void _u_Resync()
     {
+        if (!webManager.online) return;
+
         string url = syncedURL.Get();
         // If the channel is a valid twitch link, have everyone
         // adjust or open their connection to that channel.  Otherwise 
@@ -150,7 +152,7 @@ public class TwitchChatBehavior : UdonSharpBehaviour
             if (split.Length < 5 || split[2] != "PRIVMSG")
             {
                 // Debug option exclusively for non-chat-message ws messages
-                // Debug.Log("[TwitchChatBehavior] WebSocketReceive: " + connectionString);
+                Debug.Log("[TwitchChatBehavior] WebSocketReceive: " + connectionString);
                 return;
             }
 

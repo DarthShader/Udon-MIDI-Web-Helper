@@ -7,7 +7,6 @@ namespace Udon_MIDI_Web_Helper
     class MIDIManager
     {
         public const int MAX_ACTIVE_CONNECTIONS = 256;
-        const int WEB_REQUEST_FAILED_ERROR_CODE = 111;
 
         class ConnectionResponse
         {
@@ -137,12 +136,12 @@ namespace Udon_MIDI_Web_Helper
             }
         }
 
-        public void SendWebRequestFailedResponse(int connectionID)
+        public void SendWebRequestFailedResponse(int connectionID, int responseCode)
         {
             // Make a dummy HTTP frame with data length 1, HTTP response error code
             byte[] data = new byte[4 + 4 + 1]; // 4 length, 4 response code, 1 data
             Array.Copy(BitConverter.GetBytes((int)5), 0, data, 0, 4);
-            Array.Copy(BitConverter.GetBytes(WEB_REQUEST_FAILED_ERROR_CODE), 0, data, 4, 4);
+            Array.Copy(BitConverter.GetBytes(responseCode), 0, data, 4, 4);
             AddConnectionResponse((byte)connectionID, data);
         }
 
