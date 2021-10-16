@@ -23,7 +23,7 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 * VRChat worlds have the power to make any web requests/WebSocket connections they want, as long as they are targeting public internet IP addresses.  Depending on world behavior, your individual IP address is at risk of having its reputation lowered and being blacklisted by certain web authorities.  However, all web requests are logged, so malicious worlds are easy to pinpoint.
 
 # How to use in VRChat worlds
-Requires [UdonSharp] (https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
+Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
 
 Currently requires the latest Open Beta build of VRChat (version 1137+)
 
