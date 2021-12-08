@@ -23,11 +23,10 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 * Secure verification of the current world ID from the output log (useful for making sure worlds don't maliciously overwrite each others' local data or send malicious web requests to servers) uses **your active microphone list** as a fingerprint.  **It is recommended to change at least one active microphone on your computer to a unique, unguessable name - like a password** - so malicious worlds cannot attempt to impersonate a different world and potentially overwrite your saved data.
 * Security keys are generated in a local data folder for each new web server that wants to authenticate you as a unique user.  You should treat the generated `.keys` file as a collection of local passwords.  If you lose that file, web servers will not be able to authenticate you and you will potentially lose remote user data.
 * VRChat worlds have the power to make any web requests/WebSocket connections they want, as long as they are targeting public internet IP addresses.  Depending on world behavior, your individual IP address is at risk of having its reputation lowered and being blacklisted by certain web authorities.  However, all web requests are logged, so malicious worlds are easy to pinpoint.
+* If an exploit is discovered which allows a malicious user to print lines directly through the output log with any method other than an Udon powered world, this program would not be secure.  e.g. web requests could be made by any malicious user via an avatar or netcode function.  There is no way to mitigate such an exploit, and it would be recommended to not use this program.
 
 # How to use in VRChat worlds
-Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
-
-Currently requires the latest Open Beta build of VRChat (version 1137+)
+Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp)
 
 To add web conectivity to an Udon powered VRChat world, add a single copy of the provided prefab `UdonMIDIWebHandler`.  This contains a single UdonBehaviour through which all web connections and midi data passes.  
 
