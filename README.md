@@ -8,8 +8,6 @@ This is a terms-of-service abiding web connectivity helper for VRChat worlds.  T
 # [Downloads (.exe and .unitypackage)](http://github.com/DarthShader/Udon-MIDI-Web-Helper/releases)
 
 # Requirements
-Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
-
 * [loopMIDI by Tobias Erichsen](https://www.tobias-erichsen.de/software/loopmidi.html) - This software includes a driver for creating virtual MIDI devices, which Windows does not natively support.  loopMIDI only needs to be installed; it does not have to be running for Udon-MIDI-Web-Helper to function.
 * Windows 10
 
@@ -28,7 +26,7 @@ Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp) - currently requires
 * If an exploit is discovered which allows a malicious user to print lines directly through the output log with any method other than an Udon powered world, this program would not be secure.  e.g. web requests could be made by any malicious user via an avatar or netcode function.  There is no way to mitigate such an exploit, and it would be recommended to not use this program.
 
 # How to use in VRChat worlds
-Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp)
+Requires [UdonSharp](https://github.com/MerlinVR/UdonSharp) - currently requires the latest 1.0 beta version available in the discord server
 
 To add web conectivity to an Udon powered VRChat world, add a single copy of the provided prefab `UdonMIDIWebHandler`.  This contains a single UdonBehaviour through which all web connections and midi data passes.  
 
