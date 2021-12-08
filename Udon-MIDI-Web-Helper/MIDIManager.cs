@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using TobiasErichsen.teVirtualMIDI;
+using System.Text;
 
 namespace Udon_MIDI_Web_Helper
 {
     class MIDIManager
     {
         public const int MAX_ACTIVE_CONNECTIONS = 256;
+        public const int MAX_USABLE_CONNECTIONS = 255;
 
         class ConnectionResponse
         {
@@ -17,6 +19,7 @@ namespace Udon_MIDI_Web_Helper
         Queue<ConnectionResponse>[] responses = new Queue<ConnectionResponse>[MAX_ACTIVE_CONNECTIONS];
         ConnectionResponse pong = null;
         int responsesCount;
+        int totalBytesCount;
         int connectionIndex;
         MIDIFrame lastFrame;
         TeVirtualMIDI port;
@@ -43,6 +46,14 @@ namespace Udon_MIDI_Web_Helper
             }
         }
 
+        public int TotalBytesCount
+        {
+            get
+            {
+                return totalBytesCount;
+            }
+        }
+
         public MIDIManager()
         {
             port = new TeVirtualMIDI("Udon-MIDI-Web-Helper", MIDIFrame.VRC_MAX_BYTES_PER_UPDATE, TeVirtualMIDI.TE_VM_FLAGS_PARSE_TX | TeVirtualMIDI.TE_VM_FLAGS_INSTANTIATE_TX_ONLY);
@@ -61,6 +72,7 @@ namespace Udon_MIDI_Web_Helper
             cr.connectionID = connectionID;
             responses[connectionID].Enqueue(cr);
             responsesCount++;
+            totalBytesCount += data.Length;
         }
 
         public void SendFrameIfDataAvailable(bool ACK)
@@ -97,43 +109,55 @@ namespace Udon_MIDI_Web_Helper
                 GameIsReady = false;
                 lastFrame = mf;
             }
+            else if (responses[255].Count > 0)
+            {
+                // Prioritize the loopback connection second
+                SendFrameData(255);
+            }
             else if (responsesCount > 0)
             {
-                // Round robin the responses
+                // Round robin the rest of the responses
                 do
                 {
                     connectionIndex++;
-                    if (connectionIndex == MAX_ACTIVE_CONNECTIONS)
+                    if (connectionIndex == MAX_USABLE_CONNECTIONS)
                         connectionIndex = 0;
                 }
                 while (responses[connectionIndex].Count == 0);
-                ConnectionResponse responseToSend = responses[connectionIndex].Peek();
 
-                // Use up to 190 bytes from the response
-                MIDIFrame mf = new MIDIFrame();
-                // nullref here due to response queue being emptied on other thread
-                mf.AddHeader2(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++], flipFlop);
-                flipFlop = !flipFlop;
-
-                // Add up to 199 bytes from the active response to an array of data to send
-                byte[] bytesToAdd = new byte[199];
-                int bytesLeftToSend = responseToSend.data.Length - responseToSend.bytesSent;
-                int bytesToAddCount = Math.Min(bytesLeftToSend, 199); // In case there's less than 199 bytes left to send
-                Array.Copy(responseToSend.data, responseToSend.bytesSent, bytesToAdd, 0, bytesToAddCount);
-                mf.Add199Bytes(bytesToAdd);
-                responseToSend.bytesSent += bytesToAddCount;
-
-                // Remove response if all bytes have been sent
-                if (responseToSend.bytesSent == responseToSend.data.Length)
-                {
-                    responses[connectionIndex].Dequeue();
-                    responsesCount--;
-                }
-
-                mf.Send(port);
-                GameIsReady = false;
-                lastFrame = mf;
+                SendFrameData(connectionIndex);
             }
+        }
+
+        void SendFrameData(int connectionID)
+        {
+            ConnectionResponse responseToSend = responses[connectionID].Peek();
+            // Use up to 190 bytes from the response
+            MIDIFrame mf = new MIDIFrame();
+            // nullref here due to response queue being emptied on other thread
+            mf.AddHeader2(responseToSend.connectionID, responseToSend.data[responseToSend.bytesSent++], flipFlop);
+            totalBytesCount--;
+            flipFlop = !flipFlop;
+
+            // Add up to 199 bytes from the active response to an array of data to send
+            byte[] bytesToAdd = new byte[199];
+            int bytesLeftToSend = responseToSend.data.Length - responseToSend.bytesSent;
+            int bytesToAddCount = Math.Min(bytesLeftToSend, 199); // In case there's less than 199 bytes left to send
+            Array.Copy(responseToSend.data, responseToSend.bytesSent, bytesToAdd, 0, bytesToAddCount);
+            mf.Add199Bytes(bytesToAdd);
+            responseToSend.bytesSent += bytesToAddCount;
+            totalBytesCount -= bytesToAddCount;
+
+            // Remove response if all bytes have been sent
+            if (responseToSend.bytesSent == responseToSend.data.Length)
+            {
+                responses[connectionID].Dequeue();
+                responsesCount--;
+            }
+
+            mf.Send(port);
+            GameIsReady = false;
+            lastFrame = mf;
         }
 
         public void SendWebRequestFailedResponse(int connectionID, int responseCode)
@@ -165,20 +189,28 @@ namespace Udon_MIDI_Web_Helper
 
         public void SendPingResponse()
         {
-            // Send a single WS frame with data length 1, with both open/close bits set
-            byte[] data = new byte[4 + 1 + 1]; // 4 length, 1 flag byte, 1 data
-            Array.Copy(BitConverter.GetBytes((int)2), 0, data, 0, 4); // Length of actual data is 2
-            data[4] = 0xC0; // Both bits on a websocket frame represents a hacked-in priority ping response
+            int statusCode = 0; // reserved response code for pings
+            byte[] data = Encoding.Unicode.GetBytes(responsesCount + " " + totalBytesCount); // piggyback ping response with status info
+            int connectionID = 255; // reserved loopback connection
+
+            // A mix of WebManager's AddGenericResponse and MIDIManager's AddConnectionResponse
+            // Send 4 bytes for response length, 4 bytes for response code, and then response data
+            byte[] responseData = new byte[sizeof(int) * 2 + data.Length];
+            Array.Copy(BitConverter.GetBytes(data.Length + sizeof(int)), 0, responseData, 0, sizeof(int)); // data length + response code
+            Array.Copy(BitConverter.GetBytes(statusCode), 0, responseData, sizeof(int), sizeof(int));
+            Array.Copy(data, 0, responseData, sizeof(int) * 2, data.Length);
             ConnectionResponse cr = new ConnectionResponse();
-            cr.data = data;
-            cr.connectionID = 255; // Reserve last connection ID
+            cr.data = responseData;
+            cr.connectionID = (byte)connectionID;
             pong = cr;
+
         }
 
         public void Reset()
         {
             GameIsReady = true;
             responsesCount = 0;
+            totalBytesCount = 0;
             connectionIndex = 0;
             lastFrame = null;
             flipFlop = false;
@@ -189,6 +221,10 @@ namespace Udon_MIDI_Web_Helper
         public void ClearQueuedResponses(int connectionID)
         {
             responsesCount -= responses[connectionID].Count;
+            int connectionByteTotal = 0;
+            foreach (ConnectionResponse cr in responses[connectionID])
+                connectionByteTotal += cr.data.Length - cr.bytesSent;
+            totalBytesCount -= connectionByteTotal;
             responses[connectionID].Clear();
         }
     }

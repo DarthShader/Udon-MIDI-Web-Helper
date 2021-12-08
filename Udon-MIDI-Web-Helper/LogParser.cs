@@ -5,6 +5,7 @@ using System.IO;
 using System.Threading;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 
 namespace Udon_MIDI_Web_Helper
 {
@@ -45,12 +46,30 @@ namespace Udon_MIDI_Web_Helper
             public bool valueIsPublic;
         }
         Dictionary<string, Dictionary<string, LocalStorageWorldValue>> localStorage; // worldID | (key | value)
+        Dictionary<string, string> avatarChanges;
+
+        struct AvatarChange
+        {
+            public string steamID;
+            public string avatarID;
+            public string avatarName;
+            public string avatarDescription;
+            public string avatarAuthor;
+            public string avatarAuthorUserID;
+            public bool avatarCloning;
+            public string modTag;
+            public bool inVRMode;
+            public string statusDescription;
+            public string userID;
+            public string displayName;
+        }
 
         public LogParser()
         {
             midiManager = new MIDIManager();
             webManager = new WebManager(midiManager);
             localStorage = new Dictionary<string, Dictionary<string, LocalStorageWorldValue>>();
+            avatarChanges = new Dictionary<string, string>();
         }
 
         void OnLogCreated(object sender, FileSystemEventArgs e)
@@ -109,23 +128,52 @@ namespace Udon_MIDI_Web_Helper
 
                 // Watch for changes in log length
                 byte[] bytes = new byte[MAX_BYTES_PER_LINE];
+                int bytesOffset = 0;
                 while (true)
                 {
                     if (currentLog != null && currentLog.Length > previousFileLength)
                     {
                         currentLog.Seek(previousFileLength, SeekOrigin.Begin);
                         previousFileLength = currentLog.Length;
-                        int byteArrayOffset = 0;
+
+                        // Read bytes from the log.  Do not assume all lines are completely flushed at once
+                        while (currentLog.Position < previousFileLength)
+                        {
+                            bytes[bytesOffset] = (byte)currentLog.ReadByte();
+                            if (bytes[bytesOffset] == lineSeparator[lineSeparator.Length - 1])
+                            {
+                                int tempOffset = bytesOffset;
+                                bool separatorMatch = true;
+                                for (int i = lineSeparator.Length - 1; i >= 0; i--)
+                                    if (tempOffset < 0 || bytes[tempOffset--] != lineSeparator[i])
+                                    {
+                                        separatorMatch = false;
+                                        break;
+                                    }
+
+                                if (separatorMatch)
+                                {
+                                    ProcessLogLine(Encoding.UTF8.GetString(bytes, 0, bytesOffset - lineSeparator.Length + 1));
+                                    //Array.Clear(bytes, 0, bytes.Length);
+                                    bytesOffset = 0;
+                                    continue;
+                                }
+                            }
+                            bytesOffset++;
+                        }
+
+                        // old
+                        /*
                         while (currentLog.Position < previousFileLength)
                         {
                             // Read log byte-by-byte to more easily match the log's unique 4 byte line separator sequence.
                             // Individual log lines need to be isolated so individual Debug.Log calls from Udon can be securely and reliably found
                             // to be sure the [Udon-MIDI-Web-Helper] tag wasn't spoofed by something else.
-                            bytes[byteArrayOffset] = (byte)currentLog.ReadByte();
-                            if (bytes[byteArrayOffset] == lineSeparator[lineSeparator.Length - 1])
+                            bytes[bytesOffset] = (byte)currentLog.ReadByte();
+                            if (bytes[bytesOffset] == lineSeparator[lineSeparator.Length - 1])
                             {
                                 // Go through line separator from end to start, checking the previous bytes
-                                int tempByteArrayOffset = byteArrayOffset;
+                                int tempByteArrayOffset = bytesOffset;
                                 bool separatorMatch = true;
                                 bool lineTooLong = false;
                                 for (int i = lineSeparator.Length - 1; i >= 0; i--)
@@ -150,15 +198,15 @@ namespace Udon_MIDI_Web_Helper
                                 if (separatorMatch)
                                 {
                                     // Single log line found
-                                    if (!lineTooLong && byteArrayOffset > lineSeparator.Length)
-                                        ProcessLogLine(Encoding.UTF8.GetString(bytes, 0, byteArrayOffset - lineSeparator.Length + 1));
-                                    byteArrayOffset = 0;
+                                    if (!lineTooLong && bytesOffset > lineSeparator.Length)
+                                        ProcessLogLine(Encoding.UTF8.GetString(bytes, 0, bytesOffset - lineSeparator.Length + 1));
+                                    bytesOffset = 0;
                                     continue;
                                 }
                             }
 
-                            byteArrayOffset++;
-                        }
+                            bytesOffset++;
+                        }*/
                     }
 
                     // Only send midi frames on this thread to prevent race conditions
@@ -258,9 +306,15 @@ namespace Udon_MIDI_Web_Helper
 
             // This line appears shortly before microphone lines, and serves as a verifiable world/instance id log line
             // 2021.09.25 01:36:42 Log        -  [Behaviour] Joining wrld_9f212814-2234-4d53-905b-736a84895bc5:15028~private(usr_9a88296f-e5ce-4274-9e43-688338fe9d31)~nonce(781FAF7D26A06AA4F752312F133CABC5AE7A77DAF13C0905)
-            if (line.Length > 60 && (line.Substring(34, 25) == "[Behaviour] Joining wrld_" || line.Substring(34, 24) == "[Behaviour] Joining wld_"))
+            /*
+             *  2021.10.23 02:07:12 Log        -  [Behaviour] Joining wrld_ca5610af-6855-4568-864a-836f721d989b:77249
+                2021.10.23 02:07:12 Log        -  [Behaviour] Joining or Creating Room: A Rainy Day
+             * */
+            if (line.Length > 60 && line.Substring(34, 20) == "[Behaviour] Joining ")
             {
                 string[] splitByColon = line.Substring(54).Split(':');
+                if (splitByColon[0] == "or Creating Room")
+                    return;
                 lastReadWorldID = splitByColon[0];
                 // Emergency sanitization in case a malicious world spoofs the correct microphone list and
                 // provides a relative filepath where the worldID log line should be.
@@ -313,6 +367,7 @@ namespace Udon_MIDI_Web_Helper
                                     instanceID = lastReadInstanceID;
                                     Console.WriteLine("Verified world change to: " + worldID + ":" + instanceID);
                                     hostsThisWorld = 0;
+                                    avatarChanges.Clear();
                                 }
                             }
                             else if (microphoneFingerprint[microphoneFingerprint.Length - micsToRead] == micInfo)
@@ -324,6 +379,7 @@ namespace Udon_MIDI_Web_Helper
                                     instanceID = lastReadInstanceID;
                                     Console.WriteLine("Verified world change to: " + worldID + ":" + instanceID);
                                     hostsThisWorld = 0;
+                                    avatarChanges.Clear();
                                 }
                             }
                             else
@@ -341,6 +397,156 @@ namespace Udon_MIDI_Web_Helper
                     }
                 }
             }
+        }
+
+        void ProcessLogLine(string line)
+        {
+            CheckForGameStateData(line);
+            CheckForAvatarChanges(line);
+
+            // Log lines are expected to be in this format, separated by spaces, with arbitrary data arguments in base64
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] RESET
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] READY
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] ACK
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] GET 0 https://www.vrchat.com UTF16
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] POST 0 https://www.vrchat.com UTF16 key1 value1 key2 value2
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSOPEN 1 wss://echo.websocket.org UTF16
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSMESSAGE 1 txt MessageText true UTF16
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSMESSAGE 1 bin binaryblob true
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSCLOSE 1
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] CLEAR 1
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] STORE key value public global
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] RETRIEVE 3 key wrld_9f212814-2234-4d53-905b-736a84895bc5
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] OPENBROWSER https://www.github.com
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] PING
+            if (line.Length > 58 && line.Substring(34, 22) == "[Udon-MIDI-Web-Helper]")
+            {
+                string[] args = line.Substring(57).Split(' ');
+                switch (args[0])
+                {
+                    case "RESET":
+                        Reset();
+                        break;
+                    case "PING":
+                        Ping();
+                        break;
+                    case "GET":
+                        Get(args);
+                        break;
+                    case "POST":
+                        Post(args);
+                        break;
+                    case "READY":
+                        Ready();
+                        break;
+                    case "ACK":
+                        Acknowledge();
+                        break;
+                    case "WSOPEN":
+                        WebSocketOpen(args);
+                        break;
+                    case "WSCLOSE":
+                        WebSocketClose(args);
+                        break;
+                    case "CLEAR":
+                        ClearConnection(args);
+                        break;
+                    case "WSMESSAGE":
+                        WebSocketMessage(args);
+                        break;
+                    case "STORE":
+                        Store(args);
+                        break;
+                    case "RETRIEVE":
+                        Retrieve(args);
+                        break;
+                    case "OPENBROWSER":
+                        Open(args);
+                        break;
+                }
+            }
+        }
+
+        void CheckForAvatarChanges(string line)
+        {
+            // Process PLAYER 253/255 and SYSTEM 253/255 json messages if --log-debug-levels=NetworkTransport is enabled
+            AvatarChange avc;
+            avc.avatarID = null;
+            avc.displayName = null;
+            
+            if (line.Length > 68 && line.Substring(34, 34) == "[Network Data] OnEvent: SYSTEM 253")
+                avc = ParseAvatarChange(line, 68, "251");
+            else if (line.Length > 68 && line.Substring(34, 34) == "[Network Data] OnEvent: SYSTEM 255")
+                avc = ParseAvatarChange(line, 68, "249");
+            else if (line.Length > 70 && line.Substring(34, 36) == "[Network Data] OnEvent: PLAYER:  253")
+                avc = ParseAvatarChange(line, 70, "251");
+            else if (line.Length > 70 && line.Substring(34, 36) == "[Network Data] OnEvent: PLAYER:  255")
+                avc = ParseAvatarChange(line, 70, "249");
+            if (avc.avatarID != null)
+            {
+                // Don't report duplicate avatar changes.  This list is reset when world changes are verified.
+                if (avatarChanges.ContainsKey(avc.displayName) && avatarChanges[avc.displayName] == avc.avatarID)
+                    return;
+                avatarChanges[avc.displayName] = avc.avatarID;
+
+                string data = avc.displayName + "\n" + avc.avatarID;
+                byte[] bytes = Encoding.Unicode.GetBytes(data);
+                webManager.AddGenericResponse(1, bytes, 255); // Send on reserved response code & loopback connection
+                Console.WriteLine("Player " + avc.displayName + " changed into " + avc.avatarID);
+            }
+        }
+
+        AvatarChange ParseAvatarChange(string line, int offset, string dataCode)
+        {
+            string json = line.Substring(offset);
+            json = json.Replace("{{", "{").Replace("}}", "}");
+
+            var jsonDoc = JsonDocument.Parse(json);
+            AvatarChange avc = new AvatarChange();
+
+            try
+            {
+                JsonElement twoFiftyOne = jsonDoc.RootElement
+                            .GetProperty("Parameters")
+                            .GetProperty(dataCode);
+                JsonElement user = twoFiftyOne.GetProperty("user");
+
+                JsonElement jsonOut;
+                if (twoFiftyOne.TryGetProperty("steamUserID", out jsonOut))
+                    avc.steamID = jsonOut.GetString();
+                if (twoFiftyOne.TryGetProperty("avatarVariations", out jsonOut))
+                    avc.avatarID = jsonOut.GetString();
+                avc.displayName = user.GetProperty("displayName").GetString();
+                avc.userID = user.GetProperty("id").GetString();
+                avc.avatarCloning = user.GetProperty("allowAvatarCopying").GetBoolean();
+                if (twoFiftyOne.TryGetProperty("inVRMode", out jsonOut))
+                    avc.inVRMode = jsonOut.GetBoolean();
+
+                JsonElement avatarDict;
+                if (twoFiftyOne.TryGetProperty("avatarDict", out avatarDict))
+                {
+                    if (avc.avatarID == null && avatarDict.TryGetProperty("id", out jsonOut))
+                        avc.avatarID = jsonOut.GetString();
+                    if (avatarDict.TryGetProperty("name", out jsonOut))
+                        avc.avatarName = jsonOut.GetString();
+                    if (avatarDict.TryGetProperty("description", out jsonOut))
+                        avc.avatarDescription = jsonOut.GetString();
+                    if (avatarDict.TryGetProperty("authorName", out jsonOut))
+                        avc.avatarAuthor = jsonOut.GetString();
+                    if (avatarDict.TryGetProperty("authorId", out jsonOut))
+                        avc.avatarAuthorUserID = jsonOut.GetString();
+                }
+                /*
+                public string modTag;
+                public string statusDescription;
+                 */
+            }
+            catch (Exception e)
+            {
+                Console.Write("Error parsing avatar change!");
+            }
+            
+            return avc;
         }
 
         void Reset()
@@ -560,13 +766,13 @@ namespace Udon_MIDI_Web_Helper
             }
         }
 
-        void WebSocketClear(string[] args)
+        void ClearConnection(string[] args)
         {
-            // Clear unsent midi messages for given websocket connection
+            // Clear unsent midi messages for given connection
             try
             {
                 int connectionID = Int32.Parse(args[1]);
-                Console.WriteLine("Clearing websocket connection " + connectionID);
+                Console.WriteLine("Clearing connection " + connectionID);
                 midiManager.ClearQueuedResponses(connectionID);
             }
             catch (Exception e)
@@ -670,71 +876,5 @@ namespace Udon_MIDI_Web_Helper
             webManager.OpenWebPage(webUri);
         }
 
-        void ProcessLogLine(string line)
-        {
-            CheckForGameStateData(line);
-
-            // Log lines are expected to be in this format, separated by spaces, with arbitrary data arguments in base64
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] RST
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] RDY
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] ACK
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] GET 0 https://www.vrchat.com UTF16
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] PST 0 https://www.vrchat.com UTF16 key1 value1 key2 value2
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSO 1 wss://echo.websocket.org UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 txt MessageText true UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSM 1 bin binaryblob true
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSC 1
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] CLR 1
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] STORE key value public global
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] RETRIEVE 3 key wrld_9f212814-2234-4d53-905b-736a84895bc5
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] OPEN https://www.github.com
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] PING
-            if (line.Length > 58 && line.Substring(34, 22) == "[Udon-MIDI-Web-Helper]")
-            {
-                string[] args = line.Substring(57).Split(' ');
-                switch (args[0])
-                {
-                    case "RST":
-                        Reset();
-                        break;
-                    case "PING":
-                        Ping();
-                        break;
-                    case "GET":
-                        Get(args);
-                        break;
-                    case "PST":
-                        Post(args);
-                        break;
-                    case "RDY":
-                        Ready();
-                        break;
-                    case "ACK":
-                        Acknowledge();
-                        break;
-                    case "WSO":
-                        WebSocketOpen(args);
-                        break;
-                    case "WSC":
-                        WebSocketClose(args);
-                        break;
-                    case "CLR":
-                        WebSocketClear(args);
-                        break;
-                    case "WSM":
-                        WebSocketMessage(args);
-                        break;
-                    case "STORE": 
-                        Store(args);
-                        break;
-                    case "RETRIEVE": 
-                        Retrieve(args);
-                        break;
-                    case "OPEN":
-                        Open(args);
-                        break;
-                }
-            }
-        }
     }
 }

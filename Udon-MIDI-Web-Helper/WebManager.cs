@@ -13,6 +13,8 @@ namespace Udon_MIDI_Web_Helper
         public const int WEBSOCKET_BUFFER_SIZE = 10000;
         const long OPEN_WEB_PAGE_TIMEOUT_MS = 1000;
         const int WEB_REQUEST_FAILED_ERROR_CODE = 111;
+        const int RATE_LIMITED_ERROR_CODE = 113;
+        const double RATE_LIMIT_TIMEOUT_SECONDS = 10;
 
         HttpClient httpClient;
         MIDIManager midiManager;
@@ -22,6 +24,17 @@ namespace Udon_MIDI_Web_Helper
         bool[] wsAutoConvertMessages;
         List<string> cachedPrivateHostnames;
         long lastOpenedWebPage;
+        struct HostnameAndPath
+        {
+            public HostnameAndPath(string h, string p)
+            {
+                hostname = h;
+                localPath = p;
+            }
+            public string hostname;
+            public string localPath;
+        }
+        Dictionary<HostnameAndPath, DateTime> rateLimitedURIs;
 
         public CancellationTokenSource CTSource
         {
@@ -35,6 +48,7 @@ namespace Udon_MIDI_Web_Helper
         {
             midiManager = m;
             cachedPrivateHostnames = new List<string>();
+            rateLimitedURIs = new Dictionary<HostnameAndPath, DateTime>();
             Reset();
         }
 
@@ -107,13 +121,31 @@ namespace Udon_MIDI_Web_Helper
         {
             // Block all non-internet IP address
             if (HostnameIsPrivateIPAddress(webUri))
+            {
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
+            }
 
+            // Block all non http/https traffic
             if (webUri.Scheme != Uri.UriSchemeHttp && webUri.Scheme != Uri.UriSchemeHttps)
             {
                 Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
                 midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
+            }
+
+            // Block all rate limited domain+path combos
+            // Temporarily changed to include entire host
+            var hostAndPath = new HostnameAndPath(webUri.Host, "");
+            if (rateLimitedURIs.ContainsKey(hostAndPath))
+            {
+                if (DateTime.Now < rateLimitedURIs[hostAndPath])
+                {
+                    Console.WriteLine("ERROR: Could not make web request, currently rate limited.");
+                    midiManager.SendWebRequestFailedResponse(connectionID, RATE_LIMITED_ERROR_CODE);
+                    return;
+                }
+                else rateLimitedURIs.Remove(hostAndPath);
             }
 
             HttpResponseMessage response;
@@ -124,10 +156,15 @@ namespace Udon_MIDI_Web_Helper
             catch (Exception e)
             {
                 Console.WriteLine("HTTP request failed: " + e.Message);
+                rateLimitedURIs.Add(hostAndPath, DateTime.Now.AddSeconds(RATE_LIMIT_TIMEOUT_SECONDS));
                 midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
             }
 
+            // Rate limit unsuccessful requests
+            if (!response.IsSuccessStatusCode)
+                rateLimitedURIs.Add(hostAndPath, DateTime.Now.AddSeconds(RATE_LIMIT_TIMEOUT_SECONDS));
+            Console.WriteLine("Received web response (" + connectionID + "): " + webUri.AbsoluteUri);
             AddWebResponse(response, connectionID, autoConvertResponse);
         }
 
@@ -135,13 +172,30 @@ namespace Udon_MIDI_Web_Helper
         {
             // Block all non-internet IP address
             if (HostnameIsPrivateIPAddress(webUri))
+            {
+                midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
+            }
 
+            // Block all non http/https traffic
             if (webUri.Scheme != Uri.UriSchemeHttp && webUri.Scheme != Uri.UriSchemeHttps)
             {
                 Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
                 midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
+            }
+
+            // Block all rate limited domain+path combos
+            var hostAndPath = new HostnameAndPath(webUri.Host, "");
+            if (rateLimitedURIs.ContainsKey(hostAndPath))
+            {
+                if (DateTime.Now < rateLimitedURIs[hostAndPath])
+                {
+                    Console.WriteLine("ERROR: Could not make web request, currently rate limited.");
+                    midiManager.SendWebRequestFailedResponse(connectionID, RATE_LIMITED_ERROR_CODE);
+                    return;
+                }
+                else rateLimitedURIs.Remove(hostAndPath);
             }
 
             HttpResponseMessage response;
@@ -152,10 +206,15 @@ namespace Udon_MIDI_Web_Helper
             catch (Exception e)
             {
                 Console.WriteLine("HTTP POST request failed: " + e.Message);
+                rateLimitedURIs.Add(hostAndPath, DateTime.Now.AddSeconds(RATE_LIMIT_TIMEOUT_SECONDS));
                 midiManager.SendWebRequestFailedResponse(connectionID, WEB_REQUEST_FAILED_ERROR_CODE);
                 return;
             }
 
+            // Rate limit unsuccessful requests
+            if (!response.IsSuccessStatusCode)
+                rateLimitedURIs.Add(hostAndPath, DateTime.Now.AddSeconds(RATE_LIMIT_TIMEOUT_SECONDS));
+            Console.WriteLine("Received web response (" + connectionID + "): " + webUri.AbsoluteUri);
             AddWebResponse(response, connectionID, autoConvertResponse);
         }
 
@@ -188,12 +247,32 @@ namespace Udon_MIDI_Web_Helper
         {
             // Block all non-internet IP address
             if (HostnameIsPrivateIPAddress(webUri))
+            {
+                Console.WriteLine("Closing websocket connection " + connectionID);
+                midiManager.SendWebSocketClosedResponse(connectionID);
                 return;
+            }
 
             if (webUri.Scheme != "ws" && webUri.Scheme != "wss")
             {
                 Console.WriteLine("Error: World attempted to open unsupported URI: " + webUri.Scheme);
+                Console.WriteLine("Closing websocket connection " + connectionID);
+                midiManager.SendWebSocketClosedResponse(connectionID);
                 return;
+            }
+
+            // Block all rate limited domain+path combos
+            var hostAndPath = new HostnameAndPath(webUri.Host, "");
+            if (rateLimitedURIs.ContainsKey(hostAndPath))
+            {
+                if (DateTime.Now < rateLimitedURIs[hostAndPath])
+                {
+                    Console.WriteLine("ERROR: Could not open websocket connection, currently rate limited.");
+                    Console.WriteLine("Closing websocket connection " + connectionID);
+                    midiManager.SendWebSocketClosedResponse(connectionID);
+                    return;
+                }
+                else rateLimitedURIs.Remove(hostAndPath);
             }
 
             webSockets[connectionID] = new ClientWebSocket();
@@ -204,6 +283,7 @@ namespace Udon_MIDI_Web_Helper
             }
             catch (WebSocketException e)
             {
+                rateLimitedURIs.Add(hostAndPath, DateTime.Now.AddSeconds(RATE_LIMIT_TIMEOUT_SECONDS));
                 Console.WriteLine("Failed to open websocket: " + e.Message);
                 Console.WriteLine("Closing websocket connection " + connectionID);
                 midiManager.SendWebSocketClosedResponse(connectionID);
@@ -215,10 +295,6 @@ namespace Udon_MIDI_Web_Helper
                 return;
             }
 
-            // Small arbitrary delay to make sure handshake goes thorugh;
-            // for some reason an "Open" websocket will abort if the first message
-            // is sent too soon.
-            //Thread.Sleep(100);
             while (cws.State == WebSocketState.Connecting) ;
             if (cws.State == WebSocketState.Open)
                 midiManager.SendWebSocketOpenedResponse(connectionID);
@@ -234,6 +310,8 @@ namespace Udon_MIDI_Web_Helper
                 }
                 catch (WebSocketException e)
                 {
+                    // Aborted state.  To or to not rate limit, because twitch likes to 
+                    // abort any connection when a nickname is already taken...
                     Console.WriteLine("WebSocketException: " + e.Message);
                     Console.WriteLine("Closing websocket connection " + connectionID);
                     midiManager.SendWebSocketClosedResponse(connectionID);
@@ -246,7 +324,7 @@ namespace Udon_MIDI_Web_Helper
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine("WebSocket exception: " + e.Message);
+                    Console.WriteLine("Exception: " + e.Message);
                     Console.WriteLine("Closing websocket connection " + connectionID);
                     midiManager.SendWebSocketClosedResponse(connectionID);
                     webSockets[connectionID] = null;
@@ -256,6 +334,7 @@ namespace Udon_MIDI_Web_Helper
                 // Copy data to an intermediate array in case it needs to be converted from UTF8 to UTF16
                 byte[] message = new byte[wssr.Count];
                 Array.Copy(wsBuffers[connectionID].Array, 0, message, 0, wssr.Count);
+                Console.WriteLine("Received websocket message: " + Encoding.UTF8.GetString(message));
                 if (wsAutoConvertMessages[connectionID] && (wssr.MessageType == WebSocketMessageType.Text))
                     message = Encoding.Convert(Encoding.UTF8, Encoding.Unicode, message);
 

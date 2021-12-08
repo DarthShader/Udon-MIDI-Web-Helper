@@ -10,11 +10,10 @@ public class UdonWebRequestExample : UdonSharpBehaviour
 {
     // Link this behaviour to the centralized web handler
     public UdonMIDIWebHandler webManager;
-    // Create variables to act as arguments for WebRequestReceived()
+    // Create variables to act as arguments for _u_WebRequestReceived()
     int connectionID = -1;
     byte[] connectionData;
     string connectionString;
-    string unicodeData;
     int responseCode;
 
     // Simple address bar

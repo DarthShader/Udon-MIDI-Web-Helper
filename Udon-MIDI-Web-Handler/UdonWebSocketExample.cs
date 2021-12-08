@@ -21,7 +21,7 @@ public class UdonWebSocketExample : UdonSharpBehaviour
     public InputField urlField;
     // Simple message field
     public InputField messageField;
-    // Simply log-style display
+    // Simple log-style display
     public InputField output;
 
     public void _u_UrlEntered()
