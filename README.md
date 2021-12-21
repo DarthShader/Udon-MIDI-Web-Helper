@@ -1,7 +1,7 @@
 ![icon](https://user-images.githubusercontent.com/42289116/112239883-b4314480-8c1d-11eb-812a-329190c426af.png)
 
 # Udon-MIDI-Web-Helper
-This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 255 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~100kbps.  It also comes with local storage options for worlds, so persistence can be achieved without needing a web server.
+This is a terms-of-service abiding web connectivity helper for VRChat worlds.  This external program reads the VRChat output log and looks for specific web request URLs from Udon, performs these web requests, and sends data back to VRChat through a virtual MIDI device.  Up to 255 simultaneous HTTP and WebSocket connections can be made, and on average data can be transferred through MIDI at ~72kbps.  It also comes with local storage options for worlds, so persistence can be achieved without needing a web server.
 
 **This is not a VRChat client modification.**  Client modifications are against the VRChat terms of service and are a **bannable offense**.  Additionally, they are a threat to the social landscape of the platform - it is plagued by numerous fundamental security vulnerabilities which, when exploited en masse, make properly moderating the platform nearly impossible.  And ultimately, the entitlement of treating the platform as open source is an insult to legitimate content creators who have for a very long time put up with VRChat's creative restrictions.  Do not use a modified client.
 
