@@ -47,6 +47,7 @@ namespace Udon_MIDI_Web_Helper
         }
         Dictionary<string, Dictionary<string, LocalStorageWorldValue>> localStorage; // worldID | (key | value)
         Dictionary<string, string> avatarChanges;
+        string connectionKey;
 
         struct AvatarChange
         {
@@ -70,6 +71,14 @@ namespace Udon_MIDI_Web_Helper
             webManager = new WebManager(midiManager);
             localStorage = new Dictionary<string, Dictionary<string, LocalStorageWorldValue>>();
             avatarChanges = new Dictionary<string, string>();
+            GenerateConnectionKey();
+        }
+
+        void GenerateConnectionKey()
+        {
+            byte[] bytes = new byte[32];
+            new System.Security.Cryptography.RNGCryptoServiceProvider().GetBytes(bytes);
+            connectionKey = BitConverter.ToString(bytes).Replace("-", "").ToLower();
         }
 
         void OnLogCreated(object sender, FileSystemEventArgs e)
@@ -408,61 +417,70 @@ namespace Udon_MIDI_Web_Helper
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] RESET
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] READY
             // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] ACK
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] GET 0 https://www.vrchat.com UTF16
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] POST 0 https://www.vrchat.com UTF16 key1 value1 key2 value2
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSOPEN 1 wss://echo.websocket.org UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSMESSAGE 1 txt MessageText true UTF16
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSMESSAGE 1 bin binaryblob true
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] WSCLOSE 1
-            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] CLEAR 1
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] STORE key value public global
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] RETRIEVE 3 key wrld_9f212814-2234-4d53-905b-736a84895bc5
-            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] OPENBROWSER https://www.github.com
             // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] PING
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] connectionKey GET 0 https://www.vrchat.com UTF16
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] connectionKey POST 0 https://www.vrchat.com UTF16 key1 value1 key2 value2
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] connectionKey WSOPEN 1 wss://echo.websocket.org UTF16
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] connectionKey WSMESSAGE 1 txt MessageText true UTF16
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] connectionKey WSMESSAGE 1 bin binaryblob true
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] connectionKey WSCLOSE 1
+            // 2021.03.16 20:00:01 Log        -  [Udon-MIDI-Web-Helper] connectionKey CLEAR 1
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] connectionKey STORE key value public global
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] connectionKey RETRIEVE 3 key wrld_9f212814-2234-4d53-905b-736a84895bc5
+            // 2021.01.01 00:00:00 Log        -  [Udon-MIDI-Web-Helper] connectionKey OPENBROWSER https://www.github.com
             if (line.Length > 58 && line.Substring(34, 22) == "[Udon-MIDI-Web-Helper]")
             {
                 string[] args = line.Substring(57).Split(' ');
-                switch (args[0])
+                if (args[0] == connectionKey)
                 {
-                    case "RESET":
-                        Reset();
-                        break;
-                    case "PING":
-                        Ping();
-                        break;
-                    case "GET":
-                        Get(args);
-                        break;
-                    case "POST":
-                        Post(args);
-                        break;
-                    case "READY":
-                        Ready();
-                        break;
-                    case "ACK":
-                        Acknowledge();
-                        break;
-                    case "WSOPEN":
-                        WebSocketOpen(args);
-                        break;
-                    case "WSCLOSE":
-                        WebSocketClose(args);
-                        break;
-                    case "CLEAR":
-                        ClearConnection(args);
-                        break;
-                    case "WSMESSAGE":
-                        WebSocketMessage(args);
-                        break;
-                    case "STORE":
-                        Store(args);
-                        break;
-                    case "RETRIEVE":
-                        Retrieve(args);
-                        break;
-                    case "OPENBROWSER":
-                        Open(args);
-                        break;
+                    switch (args[1])
+                    {
+                        case "GET":
+                            Get(args);
+                            break;
+                        case "POST":
+                            Post(args);
+                            break;
+                        case "WSOPEN":
+                            WebSocketOpen(args);
+                            break;
+                        case "WSCLOSE":
+                            WebSocketClose(args);
+                            break;
+                        case "CLEAR":
+                            ClearConnection(args);
+                            break;
+                        case "WSMESSAGE":
+                            WebSocketMessage(args);
+                            break;
+                        case "STORE":
+                            Store(args);
+                            break;
+                        case "RETRIEVE":
+                            Retrieve(args);
+                            break;
+                        case "OPENBROWSER":
+                            Open(args);
+                            break;
+                    }
+                }
+                else
+                {
+                    switch (args[0])
+                    {
+                        case "PING":
+                            Ping();
+                            break;
+                        case "READY":
+                            Ready();
+                            break;
+                        case "ACK":
+                            Acknowledge();
+                            break;
+                        case "RESET":
+                            Reset();
+                            break;
+                    }
                 }
             }
         }
@@ -551,9 +569,14 @@ namespace Udon_MIDI_Web_Helper
 
         void Reset()
         {
+            // This should only be called once on world change
+
             Console.WriteLine("Connections reset.");
             webManager.Reset();
             midiManager.Reset();
+            GenerateConnectionKey();
+            byte[] bytes = Encoding.Unicode.GetBytes(connectionKey);
+            webManager.AddGenericResponse(2, bytes, 255); // Send on reserved response code & loopback connection
         }
 
         void Ping()
@@ -566,9 +589,9 @@ namespace Udon_MIDI_Web_Helper
             // new http get request with conntionID, uri, and optional "auto-convert response from UTF8 to UTF16" arguments
             try
             {
-                int connectionID = Int32.Parse(args[1]);
+                int connectionID = Int32.Parse(args[2]);
                 // Un-base64 the uri into a byte array, then convert it from Unicode to a string
-                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
                 Uri webUri;
                 try
                 {
@@ -581,8 +604,8 @@ namespace Udon_MIDI_Web_Helper
                     return;
                 }
                 bool autoConvertResponse = false;
-                if (args.Length > 3)
-                    autoConvertResponse = args[3] == "UTF16";
+                if (args.Length > 4)
+                    autoConvertResponse = args[4] == "UTF16";
 
                 Console.WriteLine("Performing web request (" + connectionID + "): " + uriDecoded);
                 webManager.GetWebRequest(connectionID, webUri, autoConvertResponse);
@@ -598,15 +621,15 @@ namespace Udon_MIDI_Web_Helper
             // new http post request with conntionID, uri, "auto-convert response from UTF8 to UTF16", and any number of key/value pair arguments
             try
             {
-                if (args.Length % 2 == 1 || args.Length < 4)
+                if (args.Length % 2 == 0 || args.Length < 5)
                 {
                     Console.WriteLine("Error: Incorrect number of arguments in web post request.");
                     return;
                 }
 
-                int connectionID = Int32.Parse(args[1]);
+                int connectionID = Int32.Parse(args[2]);
                 // Un-base64 the uri into a byte array, then convert it from Unicode to a string
-                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
                 Uri webUri;
                 try
                 {
@@ -620,9 +643,9 @@ namespace Udon_MIDI_Web_Helper
                 }
 
                 bool autoConvertResponse = false;
-                autoConvertResponse = args[3] == "UTF16";
+                autoConvertResponse = args[4] == "UTF16";
 
-                int argCount = (args.Length - 3) / 2;
+                int argCount = (args.Length - 4) / 2;
                 var dict = new Dictionary<string, string>(argCount);
                 for (int i = 4; i < args.Length; i += 2)
                 {
@@ -723,8 +746,8 @@ namespace Udon_MIDI_Web_Helper
             // new websocket connection with conntionID, uri, and optional UTF16 arguments
             try
             {
-                int connectionID = Int32.Parse(args[1]);
-                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                int connectionID = Int32.Parse(args[2]);
+                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
                 Uri webUri;
                 try
                 {
@@ -738,8 +761,8 @@ namespace Udon_MIDI_Web_Helper
                     return;
                 }
                 bool autoConvertResponse = false;
-                if (args.Length > 3)
-                    autoConvertResponse = args[3] == "UTF16";
+                if (args.Length > 4)
+                    autoConvertResponse = args[4] == "UTF16";
                 Console.WriteLine("Opening websocket (" + connectionID + "): " + uriDecoded);
                 webManager.OpenWebSocketConnection(connectionID, webUri, autoConvertResponse);
             }
@@ -754,7 +777,7 @@ namespace Udon_MIDI_Web_Helper
             // close existing websocket connection with connectionID argument
             try
             {
-                int connectionID = Int32.Parse(args[1]);
+                int connectionID = Int32.Parse(args[2]);
                 Console.WriteLine("Closing websocket connection " + connectionID);
                 midiManager.ClearQueuedResponses(connectionID);
                 midiManager.SendWebSocketClosedResponse(connectionID);
@@ -771,7 +794,7 @@ namespace Udon_MIDI_Web_Helper
             // Clear unsent midi messages for given connection
             try
             {
-                int connectionID = Int32.Parse(args[1]);
+                int connectionID = Int32.Parse(args[2]);
                 Console.WriteLine("Clearing connection " + connectionID);
                 midiManager.ClearQueuedResponses(connectionID);
             }
@@ -786,13 +809,13 @@ namespace Udon_MIDI_Web_Helper
             // Send websocket message with connectionID, text/bin flag, data, and optional UTF16 arguments
             try
             {
-                int connectionID = Int32.Parse(args[1]);
-                bool textMessage = args[2] == "txt";
-                byte[] data = Convert.FromBase64String(args[3]);
+                int connectionID = Int32.Parse(args[2]);
+                bool textMessage = args[3] == "txt";
+                byte[] data = Convert.FromBase64String(args[4]);
                 bool autoConvertMessage = false;
-                bool endOfMessage = args[4] == "true";
-                if (args.Length > 5)
-                    autoConvertMessage = args[5] == "UTF16";
+                bool endOfMessage = args[5] == "true";
+                if (args.Length > 6)
+                    autoConvertMessage = args[6] == "UTF16";
                 Console.WriteLine("Sending websocket message: " + Encoding.Unicode.GetString(data));
                 webManager.SendWebSocketMessage(connectionID, data, textMessage, endOfMessage, autoConvertMessage);
             }
@@ -808,17 +831,17 @@ namespace Udon_MIDI_Web_Helper
             try
             {
                 string saveDataWorldID = worldID;
-                if (args.Length == 5 && args[4] == "global")
+                if (args.Length == 6 && args[5] == "global")
                     saveDataWorldID = "global";
 
-                string key = Encoding.Unicode.GetString(Convert.FromBase64String(args[1]));
-                string value = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                string key = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                string value = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
 
                 LoadLocalStorage(saveDataWorldID);
 
                 if (localStorage[saveDataWorldID].ContainsKey(key))
-                    localStorage[saveDataWorldID][key] = new LocalStorageWorldValue(value, args[3] == "public" || saveDataWorldID == "global");
-                else localStorage[saveDataWorldID].Add(key, new LocalStorageWorldValue(value, args[3] == "public" || saveDataWorldID == "global"));
+                    localStorage[saveDataWorldID][key] = new LocalStorageWorldValue(value, args[4] == "public" || saveDataWorldID == "global");
+                else localStorage[saveDataWorldID].Add(key, new LocalStorageWorldValue(value, args[4] == "public" || saveDataWorldID == "global"));
 
                 SaveLocalStorage(saveDataWorldID);
                 Console.WriteLine("Stored value:" + value + " to key:" + key + " for " + saveDataWorldID + ".savedata");
@@ -834,11 +857,11 @@ namespace Udon_MIDI_Web_Helper
             // Retrieve value given a key and worldID  (.savedata file)
             try
             {
-                int connectionID = Int32.Parse(args[1]);
-                string saveDataWorldID = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
+                int connectionID = Int32.Parse(args[2]);
+                string saveDataWorldID = Encoding.Unicode.GetString(Convert.FromBase64String(args[4]));
                 saveDataWorldID = saveDataWorldID.Replace("\\", "").Replace(".", "");
 
-                string key = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
+                string key = Encoding.Unicode.GetString(Convert.FromBase64String(args[3]));
                 Console.WriteLine("Retrieving (" + connectionID + ") " + key + " from " + saveDataWorldID);
 
                 if (LoadLocalStorage(saveDataWorldID)) // worldID save data found
@@ -864,7 +887,7 @@ namespace Udon_MIDI_Web_Helper
             Uri webUri;
             try
             {
-                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[1]));
+                string uriDecoded = Encoding.Unicode.GetString(Convert.FromBase64String(args[2]));
                 webUri = new Uri(uriDecoded);
             }
             catch (UriFormatException e)

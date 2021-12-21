@@ -40,7 +40,7 @@ namespace Udon_MIDI_Web_Helper
             Console.WriteLine("TeVirtualMIDI started");
             Console.WriteLine("using dll-version:    " + TeVirtualMIDI.versionString);
             Console.WriteLine("using driver-version: " + TeVirtualMIDI.driverVersionString);
-            Console.WriteLine("Udon-MIDI-Web-Helper v14 Ready.  Press Escape to end the program.");
+            Console.WriteLine("Udon-MIDI-Web-Helper v15 Ready.  Press Escape to end the program.");
 
             Thread logParserThread = new Thread(new ThreadStart(new LogParser().Run));
             logParserThread.Start();

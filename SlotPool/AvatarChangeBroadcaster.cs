@@ -7,6 +7,9 @@ using UnityEngine.UI;
 
 // Requires --log-debug-levels=NetworkTransport
 
+// UPDATE: As of VRChat build 1160 (12/10/2021), NetworkTransport logging has been completely removed.
+// Avatar changes can no longer be parsed and sent through MIDI
+
 [UdonBehaviourSyncMode(BehaviourSyncMode.Manual)]
 public class AvatarChangeBroadcaster : UdonSharpBehaviour
 {
